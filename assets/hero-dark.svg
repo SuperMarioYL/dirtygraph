@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 300" width="880" height="300"
+     font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif"
+     role="img" aria-label="DirtyGraph — 给 Agent 代码知识图谱接上 Bazel 式脏标记">
+  <defs>
+    <linearGradient id="hd-wash" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4DA3FF" stop-opacity="0.09"/>
+      <stop offset="1" stop-color="#8985FF" stop-opacity="0.08"/>
+    </linearGradient>
+    <linearGradient id="hd-name" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4DA3FF"/>
+      <stop offset="0.62" stop-color="#6E8CFF"/>
+      <stop offset="1" stop-color="#8985FF"/>
+    </linearGradient>
+    <marker id="hd-ah" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#5A5A66"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="880" height="300" fill="#1D1D1F"/>
+  <rect x="0" y="0" width="880" height="300" fill="url(#hd-wash)"/>
+
+  <!-- left: wordmark + tagline -->
+  <text x="64" y="118" font-size="58" font-weight="800" fill="url(#hd-name)" letter-spacing="-1.5">DirtyGraph</text>
+  <text x="66" y="160" font-size="18" font-weight="600" fill="#F5F5F7">给 Agent 代码知识图谱接上 Bazel 式脏标记</text>
+  <text x="66" y="190" font-size="14.5" font-weight="500" fill="#A1A1A8">文件一改，只重算受影响的脏闭包 —— 而不是整库重扫</text>
+
+  <!-- pills -->
+  <g font-size="12.5" font-weight="600">
+    <rect x="66" y="214" width="118" height="28" rx="14" fill="#4DA3FF" fill-opacity="0.16" stroke="#4DA3FF" stroke-width="1.2"/>
+    <text x="125" y="232.5" text-anchor="middle" fill="#9FCBFF">脏闭包传播</text>
+    <rect x="196" y="214" width="132" height="28" rx="14" fill="#8985FF" fill-opacity="0.16" stroke="#8985FF" stroke-width="1.2"/>
+    <text x="262" y="232.5" text-anchor="middle" fill="#BDB9FF">DeepSeek / Qwen</text>
+    <rect x="340" y="214" width="96" height="28" rx="14" fill="#2DC79A" fill-opacity="0.16" stroke="#2DC79A" stroke-width="1.2"/>
+    <text x="388" y="232.5" text-anchor="middle" fill="#7FE3C8">增量重算</text>
+  </g>
+
+  <!-- right: the benchmark payoff, a mini dirty-closure graph -->
+  <g transform="translate(584,52)">
+    <rect x="0" y="0" width="248" height="196" rx="18" fill="#2A2A2E" fill-opacity="0.7" stroke="#3A3A44" stroke-width="1.3"/>
+
+    <!-- edges -->
+    <g stroke="#3A3A44" stroke-width="1.5" fill="none">
+      <line x1="60" y1="58" x2="60" y2="98" marker-end="url(#hd-ah)"/>
+      <line x1="60" y1="120" x2="60" y2="148" marker-end="url(#hd-ah)"/>
+      <line x1="84" y1="46" x2="168" y2="46" marker-end="url(#hd-ah)"/>
+    </g>
+
+    <!-- dirty (re-derived) nodes -->
+    <g>
+      <circle cx="60" cy="40" r="17" fill="#8985FF" fill-opacity="0.22" stroke="#8985FF" stroke-width="1.6"/>
+      <circle cx="60" cy="110" r="17" fill="#8985FF" fill-opacity="0.22" stroke="#8985FF" stroke-width="1.6"/>
+      <circle cx="60" cy="166" r="17" fill="#8985FF" fill-opacity="0.22" stroke="#8985FF" stroke-width="1.6"/>
+    </g>
+    <!-- clean node -->
+    <circle cx="186" cy="46" r="16" fill="#2DC79A" fill-opacity="0.0" stroke="#3A3A44" stroke-width="1.5" stroke-dasharray="3 3"/>
+
+    <text x="124" y="186" text-anchor="middle" font-size="13.5" font-weight="700" fill="#7FE3C8">re-derived 3 of 1,203</text>
+  </g>
+</svg>

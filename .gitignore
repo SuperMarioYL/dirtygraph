@@ -1,0 +1,34 @@
+# Python
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# DirtyGraph runtime sidecar
+.dirtygraph/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# build scratch
+BUILD_SETUP_NEXT_STEPS.md
+PUBLISH_BLOCKED.md
+.spawn.*
+.builder_*
+.build_metadata*
+.stage_*
+_build_stages.js
+_build_ctx.json
