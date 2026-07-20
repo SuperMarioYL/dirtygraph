@@ -15,7 +15,7 @@
 <p align="center"><sub>给 Agent 代码知识图谱（graphify / code-review-graph 那一类）接上 Bazel 式脏标记：文件一改，只重算被它派生的脏闭包。</sub></p>
 
 <p align="center">
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-0071E3.svg" alt="license"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-0071E3.svg" alt="license"></a>
   <a href="https://github.com/SuperMarioYL/dirtygraph/releases"><img src="https://img.shields.io/github/v/release/SuperMarioYL/dirtygraph" alt="release"></a>
   <a href="https://github.com/SuperMarioYL/dirtygraph/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/SuperMarioYL/dirtygraph/ci.yml?branch=main&label=CI" alt="CI"></a>
   <img src="https://img.shields.io/badge/python-3.12-3776AB.svg" alt="python">
