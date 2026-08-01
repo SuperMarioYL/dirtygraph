@@ -121,6 +121,7 @@ def rederive(
     adapter: Adapter,
     *,
     persist: bool = True,
+    current_hashes: Optional[Dict[str, str]] = None,
 ) -> RederiveResult:
     """Re-derive the currently-dirty closure and clear it.
 
@@ -137,6 +138,11 @@ def rederive(
 
     Clean nodes are NEVER passed to the adapter — that is the whole product.
     Returns a :class:`RederiveResult` carrying the before/after benchmark.
+
+    ``current_hashes`` — when the caller (e.g. the CLI) already hashed the
+    tree once for change detection, pass that dict here so the engine does NOT
+    re-hash the whole tree a second time. ``None`` (default) hashes on demand,
+    preserving the standalone API.
     """
     dirty_ids = set(store.dirty_nodes())
     total = store.total
@@ -156,7 +162,10 @@ def rederive(
 
     # Hash once up front so every re-derived node checkpoints against the same
     # on-disk snapshot (and so two nodes sharing a file don't double-hash it).
-    current_hashes = store.compute_hashes()
+    # Reuse the caller's snapshot when provided to avoid a second full-tree
+    # hash (the CLI marks dirty AND re-derives in one pass).
+    if current_hashes is None:
+        current_hashes = store.compute_hashes()
     cleaned_paths: Dict[str, str] = {}
 
     for node_id in order:

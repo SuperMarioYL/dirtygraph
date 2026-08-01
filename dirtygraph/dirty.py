@@ -29,7 +29,7 @@ from typing import Dict, List, Optional, Set
 from .depgraph import DepGraph
 from .store import Store
 
-__all__ = ["DirtyResult", "compute_dirty_closure", "mark_dirty"]
+__all__ = ["DirtyResult", "DirtyCause", "compute_dirty_closure", "mark_dirty", "explain_dirty"]
 
 
 @dataclass(slots=True)
@@ -139,3 +139,47 @@ def mark_dirty(
     if persist:
         store.save()
     return result
+
+
+@dataclass(slots=True)
+class DirtyCause:
+    """Why one dirty node is in the closure — its provenance for ``status --why``.
+
+    ``kind`` is ``"direct"`` (the node's own source file changed) or
+    ``"propagated"`` (pulled in by edge reachability from a direct hit).
+    ``sources`` lists the changed source paths responsible (direct hits only);
+    ``via`` is the shortest propagation path from a direct-hit node down to
+    this node (propagated hits only), inclusive of both ends.
+    """
+
+    node_id: str
+    kind: str  # "direct" | "propagated"
+    sources: List[str] = field(default_factory=list)
+    via: List[str] = field(default_factory=list)
+
+
+def explain_dirty(
+    store: Store,
+    graph: DepGraph,
+    result: DirtyResult,
+) -> List[DirtyCause]:
+    """Explain, per dirty node, WHY it is in the closure.
+
+    For a direct hit: the changed source file(s) that this node derives from.
+    For a propagated node: the shortest forward propagation path from a
+    direct-hit node down to it (so the user can see the chain of edges that
+    restaged it). Uses only the existing ``reachable`` / ``path_from_any``
+    primitives — no new graph algorithms.
+    """
+    direct = result.direct
+    changed = result.changed_paths
+    causes: List[DirtyCause] = []
+    for nid in result.ordered_closure():
+        entry = store.get(nid)
+        if nid in direct:
+            srcs = [p for p in changed if entry is not None and entry.source_path == p]
+            causes.append(DirtyCause(node_id=nid, kind="direct", sources=srcs))
+        else:
+            path = graph.path_from_any(direct, nid)
+            causes.append(DirtyCause(node_id=nid, kind="propagated", via=path))
+    return causes

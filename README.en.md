@@ -183,13 +183,20 @@ The optional domestic-model re-derive path is driven entirely by env vars:
 - [x] **m1 · Provenance tracking** — `init` ingests an existing graph, blake3-hashes each source, persists `.dirtygraph/state.json`
 - [x] **m2 · Dirty-closure marking** — build a `networkx` graph from relation edges; on a file change compute the forward-reachable closure and set dirty bits
 - [x] **m3 · Dirty-subgraph re-derive** — `rederive` topo-sorts the dirty closure, calls the adapter per node, prints the before/after benchmark
+- [x] **m4 · Watch stability fix** — `Store.save()` no-ops on unchanged content + watch ignores `.dirtygraph/` events, killing the infinite write loop
+- [x] **m5 · Targeted re-hash** — `touch` hashes only the named file; `rederive` hashes the tree once, not twice
+- [x] **m6 · Dirty-cause explanation** — `status --why` prints each dirty node's source (direct hit source file / propagation path)
+- [x] **m7 · Clean reset** — `reset` clears dirty bits + re-stamps hashes without editing sources or re-running `init`
+- [ ] Watch auto-rederive (v0.2 fixes stability; event-level rederive is a v0.3 candidate)
 - [ ] More loaders (GraphML / Neo4j exports / Obsidian vault)
-- [ ] AST / blame-level provenance, beyond v0.1 file-content hashing
+- [ ] AST / blame-level provenance, beyond v0.1/v0.2 file-content hashing
 - [ ] More re-derive adapters (local Ollama, custom HTTP endpoints)
 
 <h2 id="license"><img src="https://api.iconify.design/tabler:license.svg?color=%230071E3&width=24" height="22" align="absmiddle" alt=""> License</h2>
 
-MIT, free and open source, no paywalled feature. Feedback welcome on the [issue tracker](https://github.com/SuperMarioYL/dirtygraph/issues) — especially after you point DirtyGraph at your own graphify / code-review-graph output.
+MIT/Apache-2.0, free and open source, no paywalled feature. Feedback welcome on the [issue tracker](https://github.com/SuperMarioYL/dirtygraph/issues) — especially after you point DirtyGraph at your own graphify / code-review-graph output.
+
+> Note: as of v0.2.0 the repo is Apache-2.0 licensed (see [LICENSE](./LICENSE)); the badge and footer were updated to match.
 
 ## Share this
 
@@ -197,4 +204,4 @@ MIT, free and open source, no paywalled feature. Feedback welcome on the [issue 
 DirtyGraph — Bazel-style dirty-marking for agent code knowledge-graphs. Edit one file, re-derive 4 nodes instead of re-scanning 1,203. Built-in DeepSeek / Qwen re-derive. https://github.com/SuperMarioYL/dirtygraph
 ```
 
-<p align="center"><sub><a href="./LICENSE">MIT</a> © 2026 SuperMarioYL</sub></p>
+<p align="center"><sub><a href="./LICENSE">Apache-2.0</a> © 2026 SuperMarioYL</sub></p>

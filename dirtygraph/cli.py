@@ -32,9 +32,9 @@ from . import __version__
 from .adapters import DEFAULT_ADAPTER, get_adapter
 from .adapters.codegraph import load_graph
 from .depgraph import DepGraph
-from .dirty import compute_dirty_closure, mark_dirty
+from .dirty import compute_dirty_closure, explain_dirty, mark_dirty
 from .rederive import rederive as run_rederive
-from .store import Store
+from .store import MISSING_HASH, STATE_DIRNAME, Store, hash_file
 
 app = typer.Typer(
     add_completion=False,
@@ -103,6 +103,21 @@ def _open_store(root: Path) -> Store:
 
 def _fmt(n: int) -> str:
     return f"{n:,}"
+
+
+def _is_sidecar_path(src_path: str) -> bool:
+    """True if a filesystem event path is inside the ``.dirtygraph`` sidecar dir.
+
+    The ``watch`` loop persists its own state writes there; without this filter
+    a save fires a watchdog event that re-arms the loop (the save no-op guard
+    in :meth:`Store.save` covers the byte-identical case, but a genuine state
+    change would still echo). Ignoring the sidecar dir entirely closes it.
+    Matches ``.dirtygraph`` as a whole path component so a sibling named
+    ``.dirtygraph_backup`` does NOT false-positive.
+    """
+    if not src_path:
+        return False
+    return STATE_DIRNAME in Path(src_path).parts
 
 
 # --------------------------------------------------------------------------- #
@@ -227,16 +242,36 @@ def touch(
         Path("."), "--root", help="DirtyGraph root holding the sidecar."
     ),
 ) -> None:
-    """Re-hash one path; if it changed, dirty-mark its closure and persist.
+    """Re-hash ONE path; if it changed, dirty-mark its closure and persist.
 
     The targeted counterpart to ``scan`` — cheap when you already know which
-    file an editor / agent just wrote.
+    file an editor / agent just wrote. Only the named file is read from disk
+    (every other tracked source keeps its recorded hash, so it reads as
+    "unchanged"); change detection therefore touches one file, not the whole
+    tree.
     """
     base = root.resolve()
     store = _open_store(base)
     graph = _build_depgraph(store, base)
-    result = mark_dirty(store, graph, persist=True)
+
+    # Targeted re-hash: start from the RECORDED hashes (no disk reads) so
+    # every tracked path reads as "unchanged", then hash ONLY the named file
+    # and stamp it into the dict. Key it by both the relative form and any
+    # stored source path that resolves to the same absolute file (covers paths
+    # stored absolutely or with a different relative shape).
+    targeted: dict[str, str] = {
+        src: (store.recorded_hash(src) or MISSING_HASH)
+        for src in store.source_paths()
+    }
+    new_hash = hash_file(path)
     rel = _as_relative(path, base)
+    targeted[rel] = new_hash
+    abs_path = str(path.resolve())
+    for src in store.source_paths():
+        if str(store.resolve(src)) == abs_path:
+            targeted[src] = new_hash
+
+    result = mark_dirty(store, graph, current_hashes=targeted, persist=True)
     if rel in result.changed_paths or str(path) in result.changed_paths:
         typer.secho(
             f"{rel} changed -> {_fmt(result.dirty_count)} dirty", fg=typer.colors.YELLOW
@@ -280,6 +315,11 @@ def status(
     write: bool = typer.Option(
         True, "--write/--no-write", help="Persist the dirty bits to the sidecar."
     ),
+    why: bool = typer.Option(
+        False,
+        "--why",
+        help="Explain WHY each node is dirty: the changed source (direct) or the propagation path (propagated).",
+    ),
 ) -> None:
     """Show the dirty closure without re-deriving — the ``N dirty of TOTAL`` line."""
     base = root.resolve()
@@ -299,10 +339,51 @@ def status(
             f"  direct hits: {_fmt(len(result.direct))} | "
             f"propagated: {_fmt(len(result.propagated))}"
         )
-    if verbose:
+    if verbose or why:
+        causes = explain_dirty(store, graph, result) if why else None
         for nid in result.ordered_closure():
             mark = "*" if nid in result.direct else " "
-            typer.echo(f"  [{mark}] {nid}")
+            if why and causes is not None:
+                cause = next((c for c in causes if c.node_id == nid), None)
+                if cause is not None and cause.kind == "direct":
+                    srcs = ", ".join(cause.sources) or "?"
+                    typer.echo(f"  [direct]    {nid}  <- source: {srcs}")
+                elif cause is not None and cause.kind == "propagated":
+                    chain = " -> ".join(cause.via) if cause.via else "?"
+                    typer.echo(f"  [propagated] {nid}  via {chain}")
+                else:
+                    typer.echo(f"  [{mark}] {nid}")
+            else:
+                typer.echo(f"  [{mark}] {nid}")
+
+
+# --------------------------------------------------------------------------- #
+# reset                                                                       #
+# --------------------------------------------------------------------------- #
+
+
+@app.command()
+def reset(
+    root: Path = typer.Option(
+        Path("."), "--root", help="DirtyGraph root holding the sidecar."
+    ),
+) -> None:
+    """Re-baseline the sidecar as clean: clear all dirty bits + re-stamp hashes.
+
+    Useful when the tree is known-good (fresh clone, after a pull, before a
+    benchmark) and you want a clean baseline without editing any source file
+    or re-running ``init`` (which re-reads the input graph). Idempotent: a
+    clean sidecar resets to clean and writes nothing new.
+    """
+    base = root.resolve()
+    store = _open_store(base)
+    cleared = store.reset()
+    store.save()
+    typer.secho(
+        f"reset: cleared {_fmt(cleared)} dirty bit(s), "
+        f"re-stamped {_fmt(len(store.source_paths()))} source hash(es)",
+        fg=typer.colors.GREEN,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -327,13 +408,18 @@ def rederive(
     Marks dirty first (so a fresh ``rederive`` after an edit picks up changes),
     then re-derives just the dirty subgraph through the chosen adapter, clears
     the bits, and re-stamps hashes. A second run with no edits re-derives 0.
+    The tree is hashed exactly ONCE per invocation (the snapshot is shared
+    between change detection and the re-derive checkpoint), not twice.
     """
     base = root.resolve()
     store = _open_store(base)
     graph = _build_depgraph(store, base)
 
     # Detect changes + mark before re-deriving so the engine has a dirty set.
-    mark_dirty(store, graph, persist=False)
+    # Hash the tree ONCE and thread the snapshot into the engine so it does not
+    # re-hash on the checkpoint pass.
+    current_hashes = store.compute_hashes()
+    mark_dirty(store, graph, current_hashes=current_hashes, persist=False)
 
     try:
         impl = get_adapter(adapter)
@@ -341,7 +427,9 @@ def rederive(
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2)
 
-    result = run_rederive(store, graph, impl, persist=True)
+    result = run_rederive(
+        store, graph, impl, persist=True, current_hashes=current_hashes
+    )
 
     typer.secho(result.headline(), fg=typer.colors.GREEN, bold=True)
     if result.failed:
@@ -401,6 +489,12 @@ def watch(
     class _Handler(FileSystemEventHandler):
         def on_any_event(self, event) -> None:  # noqa: D401
             if getattr(event, "is_directory", False):
+                return
+            # Ignore our own sidecar writes (.dirtygraph/) so a save never
+            # re-arms the loop — the save no-op guard covers the
+            # byte-identical case, but a genuine state change would still echo.
+            src = getattr(event, "src_path", "") or ""
+            if _is_sidecar_path(src):
                 return
             state["pending"] = True
             state["last"] = time.monotonic()

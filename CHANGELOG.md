@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-01
+
+Stability + targeted-perf release. Fixes a watch-loop write-thrash and two
+incremental-value-prop gaps; adds `status --why` explanation and a `reset`
+re-baseline command.
+
+### Fixed
+- **watch loop state.json write-thrash** — `mark_dirty(persist=True)` saved
+  `.dirtygraph/state.json` every debounce cycle even when nothing changed, and
+  the watchdog observer watched `.dirtygraph/`, so the save re-armed the loop
+  infinitely. `Store.save()` now no-ops when the payload is byte-identical to
+  the on-disk file, and the `watch` handler ignores events under
+  `.dirtygraph/`.
+- **`touch` full-scanned instead of hashing one path** — its docstring promised
+  a cheap targeted re-hash but it hashed the whole tree. `touch` now builds a
+  targeted `current_hashes` dict (recorded hashes for every path + a fresh
+  hash for only the named file), so change detection reads exactly one file.
+- **`rederive` double-hashed the tree** — the CLI hashed once in `mark_dirty`
+  and again in the engine. The engine now accepts a precomputed
+  `current_hashes` snapshot, and the CLI computes once and threads it through.
+
+### Added
+- `dirtygraph status --why` — explains WHY each dirty node is in the closure:
+  the changed source file (direct hits) or the shortest propagation path from
+  a direct-hit node down to it (propagated). Uses the existing
+  `reachable`/`dependents`/`path_from_any` primitives.
+- `dirtygraph reset` — re-baseline the sidecar as clean: clear every dirty bit
+  and re-stamp all content hashes from disk, without editing a source file or
+  re-running `init`. Idempotent.
+
 ## [0.1.0] - 2026-06-24
 
 Initial release. DirtyGraph adapts an existing codebase knowledge-graph and
@@ -27,5 +57,6 @@ re-derives only the stale closure when a source file changes.
   code-review-graph SQLite) plus an optional DeepSeek/Qwen re-summarize path
   behind an environment variable.
 
-[Unreleased]: https://github.com/SuperMarioYL/dirtygraph/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/SuperMarioYL/dirtygraph/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.2.0
 [0.1.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.1.0

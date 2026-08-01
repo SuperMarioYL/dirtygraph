@@ -13,12 +13,14 @@ These exercise the four behaviours the whole product rests on:
 
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 
 import pytest
 
 from dirtygraph.depgraph import DepGraph
-from dirtygraph.dirty import compute_dirty_closure, mark_dirty
+from dirtygraph.dirty import compute_dirty_closure, explain_dirty, mark_dirty
 from dirtygraph.rederive import callable_adapter, rederive
 from dirtygraph.store import Store
 
@@ -302,3 +304,219 @@ def test_one_thousand_two_hundred_node_graph_marks_small_closure(tmp_path: Path)
     assert result.dirty_count == 3
     assert result.total == 1200
     assert result.headline() == "3 dirty of 1,200"
+
+
+# --------------------------------------------------------------------------- #
+# m4: Store.save() no-op guard + watch ignores .dirtygraph/                     #
+# --------------------------------------------------------------------------- #
+
+
+def test_save_is_noop_when_content_unchanged(tmp_path: Path):
+    """A second save() with identical entries must NOT rewrite the file
+    (mtime stable) — this is what stops the watch loop's save->event->save
+    thrash."""
+    store = Store(root=tmp_path)
+    store.add("A", "src/a.py", label="A")
+    (tmp_path / "src").mkdir(exist_ok=True)
+    (tmp_path / "src" / "a.py").write_text("# a\n", encoding="utf-8")
+    store.stamp_hashes(store.compute_hashes())
+    first = store.save()
+    mtime_before = os.stat(first).st_mtime_ns
+    # Force the filesystem clock to advance so a real write would be visible.
+    time.sleep(0.02)
+    store.save()  # identical payload
+    mtime_after = os.stat(first).st_mtime_ns
+    assert mtime_after == mtime_before  # no rewrite happened
+
+
+def test_save_writes_when_content_changes(tmp_path: Path):
+    store = Store(root=tmp_path)
+    (tmp_path / "src").mkdir(exist_ok=True)
+    (tmp_path / "src" / "a.py").write_text("# a\n", encoding="utf-8")
+    store.add("A", "src/a.py")
+    store.save()
+    mtime_before = os.stat(store.state_path(tmp_path)).st_mtime_ns
+    time.sleep(0.02)
+    store.add("B", "src/b.py")  # genuinely new content
+    store.save()
+    mtime_after = os.stat(store.state_path(tmp_path)).st_mtime_ns
+    assert mtime_after > mtime_before
+
+
+def test_is_sidecar_path_filter():
+    from dirtygraph.cli import _is_sidecar_path
+
+    sep = os.sep
+    assert _is_sidecar_path(f"/tmp/x{sep}.dirtygraph{sep}state.json")
+    assert _is_sidecar_path(f"/tmp/x{sep}.dirtygraph")
+    assert not _is_sidecar_path(f"/tmp/x{sep}src{sep}a.py")
+    assert not _is_sidecar_path("")
+    # A sibling named .dirtygraph_backup must NOT match (component match only).
+    assert not _is_sidecar_path(f"/tmp/x{sep}src{sep}.dirtygraph_backup{sep}a.py")
+
+
+# --------------------------------------------------------------------------- #
+# m5: touch is a cheap targeted re-hash; rederive hashes the tree once         #
+# --------------------------------------------------------------------------- #
+
+
+def _wide_graph(tmp_path: Path, n: int = 60):
+    """A store with `n` independent nodes, each from its own file."""
+    src = tmp_path / "src"
+    src.mkdir(exist_ok=True)
+    store = Store(root=tmp_path)
+    for i in range(n):
+        (src / f"f{i}.py").write_text(f"# {i}\n", encoding="utf-8")
+        store.add(f"N{i}", f"src/f{i}.py")
+    store.stamp_hashes(store.compute_hashes())
+    store.save()
+    graph = DepGraph.from_edges(list(store.node_ids), [])
+    return store, graph, src
+
+
+def test_targeted_current_hashes_only_mark_one_path(tmp_path: Path, monkeypatch):
+    """A targeted current_hashes dict (recorded hashes + one fresh) makes
+    change detection touch only that one path, and does NOT invoke a full
+    compute_hashes on the store."""
+    store, graph, src = _wide_graph(tmp_path, n=40)
+    (src / "f5.py").write_text("# edited\n", encoding="utf-8")
+
+    import dirtygraph.store as store_mod
+    from dirtygraph.store import MISSING_HASH, hash_file
+
+    calls = {"n": 0}
+    real = store_mod.Store.compute_hashes
+
+    def counting(self):
+        calls["n"] += 1
+        return real(self)
+
+    # Patch at class level (Store is a slotted dataclass: instance assignment
+    # of a method is rejected, so monkeypatch the class itself).
+    monkeypatch.setattr(store_mod.Store, "compute_hashes", counting)
+
+    targeted = {
+        s: (store.recorded_hash(s) or MISSING_HASH) for s in store.source_paths()
+    }
+    targeted["src/f5.py"] = hash_file(store.resolve("src/f5.py"))
+
+    result = mark_dirty(store, graph, current_hashes=targeted, persist=False)
+    assert result.changed_paths == {"src/f5.py"}
+    # mark_dirty with an explicit current_hashes must NOT hash the whole tree.
+    assert calls["n"] == 0
+
+
+def test_touch_cli_hashes_only_the_named_file(tmp_path: Path, monkeypatch):
+    """`dirtygraph touch <file>` must read exactly one source file from disk,
+    not the whole tree — the docstring's 'cheap targeted re-hash' promise."""
+    from typer.testing import CliRunner
+
+    import dirtygraph.cli as cli_mod
+    import dirtygraph.store as store_mod
+
+    store, graph, src = _wide_graph(tmp_path, n=50)
+    # Persist edges so the CLI can rebuild the graph.
+    (tmp_path / "src" / "f9.py").write_text("# edited\n", encoding="utf-8")
+
+    real_hash_file = store_mod.hash_file
+    calls = {"n": 0}
+
+    def counting_hash_file(p):
+        calls["n"] += 1
+        return real_hash_file(p)
+
+    monkeypatch.setattr(cli_mod, "hash_file", counting_hash_file)
+
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["touch", str(src / "f9.py"), "--root", str(tmp_path)])
+    assert res.exit_code == 0, res.output
+    # Exactly one disk read for the named file; no full-tree scan.
+    assert calls["n"] == 1, f"expected 1 hash_file call, got {calls['n']}"
+
+
+def test_rederive_engine_does_not_rehash_when_current_hashes_given(chain, monkeypatch):
+    """When the caller hands a precomputed hash snapshot, the engine must NOT
+    call store.compute_hashes a second time."""
+    store, graph, files = chain
+    _write(files["c"], "# edited c\n")
+
+    mark_dirty(store, graph, persist=False)
+    snapshot = store.compute_hashes()
+
+    import dirtygraph.store as store_mod
+
+    calls = {"n": 0}
+    real = store_mod.Store.compute_hashes
+
+    def counting(self):
+        calls["n"] += 1
+        return real(self)
+
+    monkeypatch.setattr(store_mod.Store, "compute_hashes", counting)
+
+    adapter = callable_adapter(lambda node: node.node_id)
+    rederive(store, graph, adapter, persist=False, current_hashes=snapshot)
+    assert calls["n"] == 0  # snapshot reused, no second full hash
+
+
+# --------------------------------------------------------------------------- #
+# m6: explain_dirty — direct vs propagated provenance                         #
+# --------------------------------------------------------------------------- #
+
+
+def test_explain_dirty_direct_and_propagated(chain):
+    store, graph, files = chain
+    _write(files["b"], "# edited b\n")
+    result = compute_dirty_closure(store, graph)
+
+    causes = {c.node_id: c for c in explain_dirty(store, graph, result)}
+
+    # B is the direct hit (its own source changed).
+    assert causes["B"].kind == "direct"
+    assert causes["B"].sources == ["src/b.py"]
+    # C and D are propagated via B -> C -> D.
+    assert causes["C"].kind == "propagated"
+    assert causes["C"].via[0] == "B"
+    assert causes["C"].via[-1] == "C"
+    assert causes["D"].kind == "propagated"
+    assert causes["D"].via[0] == "B"
+    assert causes["D"].via[-1] == "D"
+    # A is upstream of the change — not in the closure at all.
+    assert "A" not in causes
+
+
+def test_explain_dirty_leaf_is_direct_with_no_path(chain):
+    store, graph, files = chain
+    _write(files["d"], "# edited d\n")
+    result = compute_dirty_closure(store, graph)
+    causes = {c.node_id: c for c in explain_dirty(store, graph, result)}
+    assert causes["D"].kind == "direct"
+    assert causes["D"].sources == ["src/d.py"]
+    assert causes["D"].via == []
+
+
+# --------------------------------------------------------------------------- #
+# m7: Store.reset re-baselines clean + idempotent                              #
+# --------------------------------------------------------------------------- #
+
+
+def test_reset_clears_dirty_and_restamps(chain):
+    store, graph, files = chain
+    _write(files["a"], "# edited a\n")
+    mark_dirty(store, graph, persist=False)
+    assert store.dirty_count > 0
+
+    cleared = store.reset()
+    assert cleared > 0
+    assert store.dirty_count == 0
+    # Re-detection against the freshly-stamped hashes sees a clean tree.
+    assert compute_dirty_closure(store, graph).is_clean
+
+
+def test_reset_is_idempotent(chain):
+    store, graph, files = chain
+    store.reset()
+    cleared = store.reset()
+    assert cleared == 0
+    assert store.dirty_count == 0
+

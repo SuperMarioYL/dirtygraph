@@ -178,7 +178,16 @@ class Store:
     # ----- persistence ------------------------------------------------------
 
     def save(self) -> Path:
-        """Atomically persist the sidecar; returns the written path."""
+        """Atomically persist the sidecar; returns the written path.
+
+        No-op guard: when the on-disk file is already byte-identical to the
+        payload we are about to write, skip the atomic replace entirely. This
+        keeps mtimes stable on a "nothing changed" run and — critically —
+        prevents the ``watch`` loop's save -> filesystem-event -> re-save
+        thrash: an ``os.replace`` fires a watchdog event even when the content
+        is unchanged, so without this guard the observer would re-arm on its
+        own state write every debounce cycle.
+        """
         path = self.state_path(self.root)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -192,8 +201,12 @@ class Store:
             ],
         }
         text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=False)
+        content = text + "\n"
+        if path.is_file() and path.read_text(encoding="utf-8") == content:
+            # Identical payload already on disk — do not touch it.
+            return path
         tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(text + "\n", encoding="utf-8")
+        tmp.write_text(content, encoding="utf-8")
         os.replace(tmp, path)  # atomic on POSIX + Windows
         return path
 
@@ -336,3 +349,16 @@ class Store:
     @property
     def total(self) -> int:
         return len(self.entries)
+
+    def reset(self) -> int:
+        """Re-baseline the sidecar as clean.
+
+        Clears every dirty bit and re-stamps every source hash from the
+        current on-disk content (so the sidecar reflects a known-good tree
+        without editing any source file or re-reading the input graph).
+        Returns the number of dirty bits that were cleared. Idempotent: a
+        clean store resets to clean and clears zero bits.
+        """
+        cleared = self.clear_dirty(self.dirty_nodes())
+        self.stamp_hashes(self.compute_hashes())
+        return cleared

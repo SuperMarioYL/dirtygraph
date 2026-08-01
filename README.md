@@ -183,13 +183,20 @@ Agent 维护的文档和代码知识图谱会和源文件悄悄失同步：你�
 - [x] **m1 · provenance 追踪** — `init` 接入已有图，逐源文件算 blake3 哈希，落 `.dirtygraph/state.json`
 - [x] **m2 · 脏闭包标记** — 用关系边建 `networkx` 图，文件变更时算前向可达闭包并置脏位
 - [x] **m3 · 脏子图重算** — `rederive` 拓扑序遍历脏闭包，逐节点调 adapter，打印 before/after benchmark
+- [x] **m4 · watch 稳定性修复** — `Store.save()` 内容未变时不落盘 + watch 忽略 `.dirtygraph/` 事件，消除无限写循环
+- [x] **m5 · 定向 re-hash** — `touch` 只哈希命中的单个文件；`rederive` 单次哈希整树而非两次
+- [x] **m6 · 脏因解释** — `status --why` 打印每个脏节点的来源（直命中源文件 / 传播路径）
+- [x] **m7 · 干净重置** — `reset` 一键清脏位 + 重新盖哈希，无需改源码或重跑 `init`
+- [ ] watch 变更即重算（v0.2 先修稳定性，事件级 rederive 是 v0.3 候选）
 - [ ] 更多 loader（GraphML / Neo4j 导出 / Obsidian vault）
-- [ ] AST / blame 级 provenance，替代 v0.1 的"文件级内容哈希"
+- [ ] AST / blame 级 provenance，替代 v0.1/v0.2 的"文件级内容哈希"
 - [ ] 更多重算 adapter（本地 Ollama、自定义 HTTP 端点）
 
 <h2 id="许可证"><img src="https://api.iconify.design/tabler:license.svg?color=%230071E3&width=24" height="22" align="absmiddle" alt=""> 许可证</h2>
 
-MIT，免费开源，无付费功能。欢迎在 [Issues](https://github.com/SuperMarioYL/dirtygraph/issues) 反馈——尤其是你把 DirtyGraph 指向自己真实的 graphify / code-review-graph 输出之后。
+MIT/Apache-2.0，免费开源，无付费功能。欢迎在 [Issues](https://github.com/SuperMarioYL/dirtygraph/issues) 反馈——尤其是你把 DirtyGraph 指向自己真实的 graphify / code-review-graph 输出之后。
+
+> 注：自 v0.2.0 起仓库采用 Apache-2.0 许可（见 [LICENSE](./LICENSE)），徽章与页脚同步更新。
 
 ## Share this
 
@@ -197,4 +204,4 @@ MIT，免费开源，无付费功能。欢迎在 [Issues](https://github.com/Sup
 DirtyGraph — 给 Agent 代码知识图谱接上 Bazel 式脏标记：文件一改只重算脏闭包，re-derived 4 nodes instead of 1,203。内置 DeepSeek / Qwen 重算。 https://github.com/SuperMarioYL/dirtygraph
 ```
 
-<p align="center"><sub><a href="./LICENSE">MIT</a> © 2026 SuperMarioYL</sub></p>
+<p align="center"><sub><a href="./LICENSE">Apache-2.0</a> © 2026 SuperMarioYL</sub></p>

@@ -7,6 +7,6 @@ computes the forward-reachable dirty closure and re-derives only those nodes,
 instead of re-scanning the whole graph.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = ["__version__"]

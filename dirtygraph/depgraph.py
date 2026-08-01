@@ -189,6 +189,32 @@ class DepGraph:
             sub = g.subgraph(wanted)
         return self._stable_topo(sub)
 
+    def path_from_any(self, sources: Iterable[str], target: str) -> List[str]:
+        """Shortest propagation path from any of ``sources`` to ``target``
+        (inclusive of both ends), walking forward along edges.
+
+        Used by ``status --why`` to explain WHY a propagated node is dirty:
+        the path is the chain of propagation hops from a directly-changed
+        node down to it. Returns ``[]`` when no path exists (e.g. the target
+        is itself a direct hit, or unreachable from the given sources).
+        """
+        g = self._g
+        nxmod = _require_nx()
+        if not g.has_node(target):
+            return []
+        best: Optional[List[str]] = None
+        for s in sources:
+            if not g.has_node(s) or s == target:
+                continue
+            try:
+                p = nxmod.shortest_path(g, source=s, target=target)
+            except Exception:
+                # NetworkXNoPath (or NodeNotFound on a phantom); skip.
+                continue
+            if best is None or len(p) < len(best):
+                best = list(p)
+        return best or []
+
     @staticmethod
     def _stable_topo(sub) -> List[str]:
         nxmod = _require_nx()
