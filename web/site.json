@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "name": "dirtygraph",
+  "github": "https://github.com/SuperMarioYL/dirtygraph",
+  "host": "dirtygraph.lei6393.com",
+  "lang": { "primary": "zh", "toggle": true },
+  "accent": ["#e6a144", "#cf8a35", "#b87a2b"],
+  "hero": {
+    "eyebrow": {
+      "zh": "增量重算 · 脏闭包 · 国产模型",
+      "en": "Incremental · Dirty closure · CN models"
+    },
+    "headline": {
+      "zh": "文件一改，\n只重算变脏的几个节点",
+      "en": "Edit one file,\nre-derive only the stale nodes"
+    },
+    "sub": {
+      "zh": "给已有的代码知识图谱接上 Bazel 式脏标记：只重算受影响闭包，而不是整库重扫。",
+      "en": "Bazel-style dirty-marking for your existing code knowledge-graph: re-derive only the affected closure, not the whole graph."
+    },
+    "command": "dirtygraph status",
+    "cta": { "zh": "查看 GitHub", "en": "View on GitHub" },
+    "ctaGithub": { "zh": "GitHub 仓库", "en": "GitHub repo" },
+    "scroll": { "zh": "向下看为什么", "en": "See why it matters" }
+  },
+  "advantages": [
+    {
+      "title": { "zh": "改一个文件，不必重扫整库", "en": "Edit a file, skip the full re-scan" },
+      "body": {
+        "zh": "靠内容哈希找出真正改动的源文件，只把它们派生的节点标脏。1200 个节点的图里，改一个叶子只标脏 3 个。",
+        "en": "Content-hash diff finds only the files that really changed and marks just the nodes they derive. On a 1,200-node graph, editing one leaf dirties 3."
+      },
+      "chips": ["› 内容未变即跳过", "› 只标脏受影响闭包"]
+    },
+    {
+      "title": { "zh": "看清每个脏节点的来由", "en": "See why every node is stale" },
+      "body": {
+        "zh": "状态命令打印脏闭包大小；加 --why 还能逐节点说明——是源文件直接改了，还是沿依赖边传过来的。",
+        "en": "Status prints the dirty-closure size; --why explains each node — a direct source change or propagated along an edge."
+      },
+      "chips": ["› 4 dirty of 1,203", "› --why 逐节点解释"]
+    },
+    {
+      "title": { "zh": "国产模型重算脏闭包", "en": "Re-summarize the closure with CN models" },
+      "body": {
+        "zh": "把脏闭包交给 DeepSeek / Qwen 重新摘要；端点不稳时自动回退到本地摘要，重算批次永不因网络中断。",
+        "en": "Hand the dirty closure to DeepSeek / Qwen for re-summarization; falls back to a local summary on any endpoint error so a batch never dies on a flaky network."
+      },
+      "chips": ["› DeepSeek / Qwen", "› 失败软回退"]
+    },
+    {
+      "title": { "zh": "watch 实时标脏，改了就知道", "en": "Watch marks dirty, live" },
+      "body": {
+        "zh": "文件一存，watch 立即重算脏闭包并打印；它自己写状态文件不会再触发循环。",
+        "en": "On every save, watch recomputes the dirty closure and prints it; its own state writes never re-trigger the loop."
+      },
+      "chips": ["› 文件事件即标脏", "› 无写循环"]
+    }
+  ],
+  "scene": { "kind": "mesh" },
+  "cta": {
+    "headline": {
+      "zh": "把整库重扫，换成只重算脏的",
+      "en": "Swap the full re-scan for a dirty-only re-derive"
+    },
+    "sub": {
+      "zh": "接入你已有的 graphify 或 code-review-graph 输出，立刻看到『重算 4 个节点而非 1200 个』。",
+      "en": "Point it at your existing graphify or code-review-graph output and see 're-derived 4 nodes instead of 1,200'."
+    },
+    "button": { "zh": "在 GitHub 上试用", "en": "Try it on GitHub" }
+  },
+  "footer": {
+    "tag": { "zh": "Apache-2.0 · 免费 · 开源", "en": "Apache-2.0 · free · open source" }
+  }
+}
