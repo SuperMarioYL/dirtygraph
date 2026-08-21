@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-22
+
+Incremental re-derive-on-event + build/publish reconciliation + a CRG-init
+root-resolution fix.
+
+### Fixed
+- **`init` used the wrong sidecar root when pointed at a `.code-review-graph`
+  store directory** — `_resolve_root` returned the store dir itself, so CRG
+  node `file_path` values (relative to the repo root) were joined under
+  `.code-review-graph/` where no source exists, every node read as
+  `MISSING_HASH`, and a change could never be detected. `_resolve_root` now
+  returns the store dir's parent (the repo root) for a `.code-review-graph`
+  directory; the explicit `--root` option still takes precedence.
+- **stale `.build_metadata.yaml` version** — still recorded `v0.1.0` while
+  `VERSION`/`pyproject.toml` were at `0.2.0`, risking a re-tag of `v0.1.0` on
+  publish. Bumped to `0.3.0` to match.
+
+### Added
+- `dirtygraph watch --rederive` — opt-in auto-re-derivation: on a debounced
+  file-change event the dirty closure is re-derived through `--adapter` and the
+  before/after is printed (`N dirty of TOTAL` then `re-derived M nodes`). Reuses
+  m3's adapter and m5's targeted single-path hashing so only the changed files
+  are re-read from disk. Off by default to avoid surprising CPU/LLM calls.
+
+### Changed
+- README license references reconciled to Apache-2.0: the English license
+  badge and both License sections previously mentioned MIT while the LICENSE
+  file is Apache-2.0.
+
 ## [0.2.0] - 2026-08-01
 
 Stability + targeted-perf release. Fixes a watch-loop write-thrash and two
@@ -57,6 +86,7 @@ re-derives only the stale closure when a source file changes.
   code-review-graph SQLite) plus an optional DeepSeek/Qwen re-summarize path
   behind an environment variable.
 
-[Unreleased]: https://github.com/SuperMarioYL/dirtygraph/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/SuperMarioYL/dirtygraph/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.3.0
 [0.2.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.2.0
 [0.1.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.1.0

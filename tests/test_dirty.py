@@ -520,3 +520,43 @@ def test_reset_is_idempotent(chain):
     assert cleared == 0
     assert store.dirty_count == 0
 
+
+# --------------------------------------------------------------------------- #
+# m8: targeted single-path hashing shared by touch + watch --rederive          #
+# --------------------------------------------------------------------------- #
+
+
+def test_targeted_current_hashes_only_reads_changed_paths(tmp_path: Path, monkeypatch):
+    """The watch loop's targeted snapshot (shared with ``touch``) re-hashes
+    ONLY the changed files; every other tracked source keeps its recorded hash
+    (no disk read). This is m5's targeted single-path hashing, reused by m8's
+    ``watch --rederive`` so the live loop never full-scans the tree per event.
+    """
+    import dirtygraph.cli as cli_mod
+
+    store, graph, src = _wide_graph(tmp_path, n=30)
+    (src / "f3.py").write_text("# edited\n", encoding="utf-8")
+    (src / "f7.py").write_text("# edited\n", encoding="utf-8")
+
+    real = cli_mod.hash_file
+    calls = {"n": 0}
+
+    def counting(p):
+        calls["n"] += 1
+        return real(p)
+
+    monkeypatch.setattr(cli_mod, "hash_file", counting)
+
+    snapshot = cli_mod._targeted_current_hashes(
+        store, tmp_path, [src / "f3.py", src / "f7.py"]
+    )
+    # Exactly the two changed files were hashed from disk.
+    assert calls["n"] == 2, f"expected 2 hash_file calls, got {calls['n']}"
+    # Changed paths carry their fresh hash; untouched paths keep the recorded one.
+    assert snapshot["src/f3.py"] == real(src / "f3.py")
+    assert snapshot["src/f7.py"] == real(src / "f7.py")
+    assert snapshot["src/f0.py"] == store.recorded_hash("src/f0.py")
+    # Feeding it to mark_dirty dirties only the two changed files' closure.
+    result = mark_dirty(store, graph, current_hashes=snapshot, persist=False)
+    assert result.changed_paths == {"src/f3.py", "src/f7.py"}
+

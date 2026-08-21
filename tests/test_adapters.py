@@ -396,3 +396,63 @@ def test_codegraph_uses_stubbed_llm_when_endpoint_responds(tmp_path: Path, monke
 
 def test_codegraph_adapter_satisfies_engine_protocol():
     assert isinstance(CodeGraphAdapter(), AdapterProtocol)
+
+
+# --------------------------------------------------------------------------- #
+# fix-crg-init-wrong-root: init pointed at a .code-review-graph store dir      #
+# --------------------------------------------------------------------------- #
+
+
+def test_resolve_root_returns_parent_for_crg_store_dir(tmp_path: Path):
+    """A ``.code-review-graph`` store dir is NOT the repo root — its node
+    ``file_path`` values are relative to the parent, so ``_resolve_root`` must
+    return the parent. Regression for fix-crg-init-wrong-root."""
+    from dirtygraph.cli import _resolve_root
+
+    crg_dir = _make_crg_store(tmp_path)  # tmp_path/.code-review-graph
+    assert crg_dir.name == ".code-review-graph"
+    # Pointing directly at the store dir resolves to the repo root (its parent).
+    assert _resolve_root(crg_dir) == tmp_path
+    # A plain repo dir (containing the store) resolves to itself.
+    assert _resolve_root(tmp_path) == tmp_path
+    # A graphify .json file resolves to its parent dir.
+    gp = tmp_path / "graph.json"
+    gp.write_text("{}", encoding="utf-8")
+    assert _resolve_root(gp) == tmp_path
+
+
+def test_init_crg_store_dir_resolves_sources_against_repo_root(tmp_path: Path):
+    """``dirtygraph init <repo>/.code-review-graph`` (no --root) must hash the
+    real source files at the repo root, not ``MISSING_HASH`` for every node.
+
+    Before the fix, base was the store dir, so ``auth.py`` resolved to
+    ``<repo>/.code-review-graph/auth.py`` (absent) -> ``MISSING_HASH`` -> the
+    tool could never detect a real change.
+    """
+    from typer.testing import CliRunner
+
+    import dirtygraph.cli as cli_mod
+    from dirtygraph.store import MISSING_HASH, Store
+
+    crg_dir = _make_crg_store(tmp_path)  # nodes reference auth.py/api.py/util.py
+    # Create the actual source files at the repo root (the CRG file_path base).
+    for name in ("auth.py", "api.py", "util.py"):
+        (tmp_path / name).write_text(f"# {name}\n", encoding="utf-8")
+
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["init", str(crg_dir)])
+    assert res.exit_code == 0, res.output
+
+    # The sidecar lives at the repo root, NOT inside the .code-review-graph dir.
+    assert Store.exists(tmp_path)
+    assert not Store.exists(crg_dir)
+
+    store = Store.load(tmp_path)
+    # Every source resolved against the repo root and hashed (not MISSING_HASH).
+    for src in store.source_paths():
+        assert store.recorded_hash(src) != MISSING_HASH, f"{src} resolved as missing"
+
+    # A clean tree reports 0 dirty.
+    res2 = runner.invoke(cli_mod.app, ["status", "--root", str(tmp_path)])
+    assert res2.exit_code == 0, res2.output
+    assert "0 dirty of 3" in res2.output

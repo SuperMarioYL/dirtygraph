@@ -194,7 +194,7 @@ Agent 维护的文档和代码知识图谱会和源文件悄悄失同步：你�
 
 <h2 id="许可证"><img src="https://api.iconify.design/tabler:license.svg?color=%230071E3&width=24" height="22" align="absmiddle" alt=""> 许可证</h2>
 
-MIT/Apache-2.0，免费开源，无付费功能。欢迎在 [Issues](https://github.com/SuperMarioYL/dirtygraph/issues) 反馈——尤其是你把 DirtyGraph 指向自己真实的 graphify / code-review-graph 输出之后。
+Apache-2.0，免费开源，无付费功能。欢迎在 [Issues](https://github.com/SuperMarioYL/dirtygraph/issues) 反馈——尤其是你把 DirtyGraph 指向自己真实的 graphify / code-review-graph 输出之后。
 
 > 注：自 v0.2.0 起仓库采用 Apache-2.0 许可（见 [LICENSE](./LICENSE)），徽章与页脚同步更新。
 

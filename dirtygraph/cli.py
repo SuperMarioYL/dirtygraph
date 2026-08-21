@@ -11,7 +11,8 @@ A single Typer app wiring the core engine into commands:
 * ``status``   — show the dirty closure (``4 dirty of 1,203``) without re-deriving.
 * ``rederive`` — re-derive ONLY the dirty closure through an adapter; print the
                  before/after benchmark (``re-derived 4 nodes (of 1,203)``).
-* ``watch``    — live file-event loop (watchdog) that marks dirty on each change.
+* ``watch``    — live file-event loop (watchdog) that marks dirty on each change;
+                 ``--rederive`` opts into re-deriving the dirty closure inline.
 
 The propagation graph (edges) is persisted next to the sidecar as
 ``.dirtygraph/edges.json`` so ``status`` / ``rederive`` can rebuild it without
@@ -30,7 +31,7 @@ import typer
 
 from . import __version__
 from .adapters import DEFAULT_ADAPTER, get_adapter
-from .adapters.codegraph import load_graph
+from .adapters.codegraph import CRG_DIRNAME, load_graph
 from .depgraph import DepGraph
 from .dirty import compute_dirty_closure, explain_dirty, mark_dirty
 from .rederive import rederive as run_rederive
@@ -85,9 +86,23 @@ def _build_depgraph(store: Store, root: Path) -> DepGraph:
 
 
 def _resolve_root(graph_path: Path) -> Path:
-    """The sidecar lives in the directory that holds the graph (or the dir itself)."""
+    """Resolve the sidecar root from a graph path.
+
+    For a file input the sidecar lives beside the file. For a directory input
+    the sidecar lives in that directory — EXCEPT a ``.code-review-graph`` store
+    directory: its node ``file_path`` values are relative to the *repo root*
+    (its parent), so resolving sources against the store dir would join every
+    path under ``.code-review-graph/`` where nothing exists, every node would
+    read as ``MISSING_HASH``, and a change could never be detected. Return the
+    parent (repo root) in that case. The explicit ``--root`` option always wins
+    (see :func:`init`).
+    """
     p = graph_path
-    return p if p.is_dir() else p.parent
+    if not p.is_dir():
+        return p.parent
+    if p.name == CRG_DIRNAME:
+        return p.parent
+    return p
 
 
 def _open_store(root: Path) -> Store:
@@ -230,6 +245,33 @@ def _as_relative(path: Path, base: Path) -> str:
         return str(p)
 
 
+def _targeted_current_hashes(
+    store: Store, base: Path, changed_paths: list[Path]
+) -> dict[str, str]:
+    """Build a change-detection snapshot that re-hashes ONLY the given paths.
+
+    Every tracked source keeps its recorded hash (no disk read) so it reads as
+    "unchanged"; only the named changed files are read from disk and stamped
+    into the dict. Keyed by both the relative form and any stored source path
+    that resolves to the same absolute file, so paths stored absolutely or with
+    a different relative shape still match. This is m5's targeted single-path
+    hashing, shared by ``touch`` and the ``watch --rederive`` loop.
+    """
+    targeted: dict[str, str] = {
+        src: (store.recorded_hash(src) or MISSING_HASH)
+        for src in store.source_paths()
+    }
+    for path in changed_paths:
+        new_hash = hash_file(path)
+        rel = _as_relative(path, base)
+        targeted[rel] = new_hash
+        abs_path = str(path.resolve())
+        for src in store.source_paths():
+            if str(store.resolve(src)) == abs_path:
+                targeted[src] = new_hash
+    return targeted
+
+
 # --------------------------------------------------------------------------- #
 # touch / scan                                                                #
 # --------------------------------------------------------------------------- #
@@ -254,22 +296,10 @@ def touch(
     store = _open_store(base)
     graph = _build_depgraph(store, base)
 
-    # Targeted re-hash: start from the RECORDED hashes (no disk reads) so
-    # every tracked path reads as "unchanged", then hash ONLY the named file
-    # and stamp it into the dict. Key it by both the relative form and any
-    # stored source path that resolves to the same absolute file (covers paths
-    # stored absolutely or with a different relative shape).
-    targeted: dict[str, str] = {
-        src: (store.recorded_hash(src) or MISSING_HASH)
-        for src in store.source_paths()
-    }
-    new_hash = hash_file(path)
+    # Targeted re-hash: re-hash ONLY the named file; every other tracked source
+    # keeps its recorded hash (no disk read) so it reads as "unchanged".
+    targeted = _targeted_current_hashes(store, base, [path])
     rel = _as_relative(path, base)
-    targeted[rel] = new_hash
-    abs_path = str(path.resolve())
-    for src in store.source_paths():
-        if str(store.resolve(src)) == abs_path:
-            targeted[src] = new_hash
 
     result = mark_dirty(store, graph, current_hashes=targeted, persist=True)
     if rel in result.changed_paths or str(path) in result.changed_paths:
@@ -458,11 +488,32 @@ def watch(
     debounce: float = typer.Option(
         0.4, "--debounce", help="Seconds to coalesce rapid file events."
     ),
+    rederive: bool = typer.Option(
+        False,
+        "--rederive",
+        help=(
+            "Opt-in: on each change event, re-derive the dirty closure through "
+            "the adapter and print before/after. Off by default to avoid "
+            "surprising CPU/LLM calls."
+        ),
+    ),
+    adapter: str = typer.Option(
+        DEFAULT_ADAPTER,
+        "--adapter",
+        "-a",
+        help="Adapter for --rederive (echo / codegraph).",
+    ),
 ) -> None:
     """Live file-event loop: on each source change, recompute + print the closure.
 
     Uses watchdog to observe the root tree; everything else in DirtyGraph is
     one-shot. Press Ctrl-C to stop.
+
+    ``--rederive`` (off by default) opts into auto-re-derivation: on a debounced
+    change event the dirty closure is re-derived through ``--adapter`` and the
+    before/after is printed (``N dirty of TOTAL`` then ``re-derived M nodes``).
+    It reuses m5's targeted single-path hashing so only the changed files are
+    re-read from disk. Off by default to avoid surprising CPU/LLM calls.
     """
     try:
         from watchdog.events import FileSystemEventHandler
@@ -479,12 +530,24 @@ def watch(
     store = _open_store(base)
     graph = _build_depgraph(store, base)
 
+    impl = None
+    if rederive:
+        try:
+            impl = get_adapter(adapter)
+        except ValueError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=2)
+
     typer.secho(
-        f"watching {base} ({_fmt(len(store))} nodes); Ctrl-C to stop",
+        f"watching {base} ({_fmt(len(store))} nodes); Ctrl-C to stop"
+        + ("; auto-rederive on" if rederive else ""),
         fg=typer.colors.BLUE,
     )
 
-    state = {"pending": False, "last": 0.0}
+    # Track which source paths fired since the last debounce so change
+    # detection can re-hash ONLY those files (m5 targeted hashing) instead of
+    # the whole tree on every cycle.
+    state: dict = {"pending": False, "last": 0.0, "changed": set()}
 
     class _Handler(FileSystemEventHandler):
         def on_any_event(self, event) -> None:  # noqa: D401
@@ -498,6 +561,7 @@ def watch(
                 return
             state["pending"] = True
             state["last"] = time.monotonic()
+            state["changed"].add(src)
 
     observer = Observer()
     observer.schedule(_Handler(), str(base), recursive=True)
@@ -507,13 +571,31 @@ def watch(
             time.sleep(debounce / 2)
             if state["pending"] and (time.monotonic() - state["last"]) >= debounce:
                 state["pending"] = False
+                # Swap the changed-path set so events that arrive while we
+                # process this batch land in a fresh set for the next cycle.
+                changed = state["changed"]
+                state["changed"] = set()
                 reloaded = Store.load(base)
-                result = mark_dirty(reloaded, graph, persist=True)
+                current = _targeted_current_hashes(
+                    reloaded, base, [Path(p) for p in changed]
+                )
+                result = mark_dirty(
+                    reloaded, graph, current_hashes=current, persist=True
+                )
                 if not result.is_clean:
                     typer.secho(
                         f"dirty closure: {result.headline()}",
                         fg=typer.colors.YELLOW,
                     )
+                    if rederive and impl is not None:
+                        red = run_rederive(
+                            reloaded,
+                            graph,
+                            impl,
+                            persist=True,
+                            current_hashes=current,
+                        )
+                        typer.secho(red.headline(), fg=typer.colors.GREEN, bold=True)
     except KeyboardInterrupt:  # pragma: no cover - interactive
         typer.echo("\nstopped")
     finally:

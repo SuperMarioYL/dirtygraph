@@ -15,7 +15,7 @@
 <p align="center"><sub>Bazel-style dirty-marking for the agent code knowledge-graphs that graphify / code-review-graph build: edit one file, re-derive only the closure it feeds.</sub></p>
 
 <p align="center">
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-0071E3.svg" alt="license"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-0071E3.svg" alt="license"></a>
   <a href="https://github.com/SuperMarioYL/dirtygraph/releases"><img src="https://img.shields.io/github/v/release/SuperMarioYL/dirtygraph" alt="release"></a>
   <a href="https://github.com/SuperMarioYL/dirtygraph/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/SuperMarioYL/dirtygraph/ci.yml?branch=main&label=CI" alt="CI"></a>
   <img src="https://img.shields.io/badge/python-3.12-3776AB.svg" alt="python">
@@ -194,7 +194,7 @@ The optional domestic-model re-derive path is driven entirely by env vars:
 
 <h2 id="license"><img src="https://api.iconify.design/tabler:license.svg?color=%230071E3&width=24" height="22" align="absmiddle" alt=""> License</h2>
 
-MIT/Apache-2.0, free and open source, no paywalled feature. Feedback welcome on the [issue tracker](https://github.com/SuperMarioYL/dirtygraph/issues) — especially after you point DirtyGraph at your own graphify / code-review-graph output.
+Apache-2.0, free and open source, no paywalled feature. Feedback welcome on the [issue tracker](https://github.com/SuperMarioYL/dirtygraph/issues) — especially after you point DirtyGraph at your own graphify / code-review-graph output.
 
 > Note: as of v0.2.0 the repo is Apache-2.0 licensed (see [LICENSE](./LICENSE)); the badge and footer were updated to match.
 
