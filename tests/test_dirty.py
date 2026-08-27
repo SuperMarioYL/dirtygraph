@@ -138,6 +138,61 @@ def test_touch_then_revert_is_clean(chain):
     assert compute_dirty_closure(store, graph).is_clean
 
 
+def test_reverted_source_clears_its_stale_dirty_bit(chain):
+    """A source edited then reverted to its baseline hash must drop out of the
+    dirty set, not keep a stale dirty bit (fix-stale-dirty-bits-on-revert).
+
+    mark_dirty reconciles the persisted dirty set to the content-hash closure,
+    so a reverted source's bit is cleared and a later rederive redoes zero
+    nodes instead of redoing byte-identical-to-baseline nodes."""
+    store, graph, files = chain
+    original = files["b"].read_text(encoding="utf-8")
+
+    # Edit B's source -> mark_dirty sets bits for B's forward closure {B, C, D}.
+    _write(files["b"], original + "# scratch\n")
+    mark_dirty(store, graph, persist=False)
+    assert set(store.dirty_nodes()) == {"B", "C", "D"}
+
+    # Revert B to its exact baseline bytes -> its hash matches the recorded one
+    # again, so the content-hash closure is empty. The stale bits must clear.
+    _write(files["b"], original)
+    mark_dirty(store, graph, persist=False)
+    assert store.dirty_nodes() == []
+    assert store.dirty_count == 0
+
+    # A subsequent rederive redoes zero nodes (no stale dirty set to act on).
+    adapter = callable_adapter(lambda node: node.node_id)
+    result = rederive(store, graph, adapter, persist=False)
+    assert result.rederived_count == 0
+
+
+def test_mark_dirty_keeps_failed_direct_hit_in_closure(chain):
+    """A failed direct-hit node (source edited, adapter raised, hash NOT
+    re-stamped) stays IN the content-hash closure on a later mark_dirty: its
+    source still differs from the recorded hash, so the reconciliation does
+    not clear it — the failed-rederive-retry safety of fix-stale-dirty-bits."""
+    store, graph, files = chain
+    _write(files["d"], "# edited d\n")  # D is a direct hit (its own source)
+    mark_dirty(store, graph, persist=False)
+    assert "D" in store.dirty_nodes()
+
+    def boom(node):
+        if node.node_id == "D":
+            raise RuntimeError("boom")
+        return node.node_id
+
+    adapter = callable_adapter(boom)
+    result = rederive(store, graph, adapter, persist=False)
+    assert "D" in result.failed
+    assert "D" in store.dirty_nodes()  # failed -> dirty bit kept
+
+    # Retry: D's source hash is still un-stamped (it failed), so its on-disk
+    # hash still differs from the recorded one -> D stays in the closure and
+    # the reconciliation does NOT clear it.
+    mark_dirty(store, graph, persist=False)
+    assert "D" in store.dirty_nodes()
+
+
 # --------------------------------------------------------------------------- #
 # 3. transitive propagation                                                   #
 # --------------------------------------------------------------------------- #

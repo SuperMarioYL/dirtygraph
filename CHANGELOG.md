@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-27
+
+File-only bug-hunt release: no live feature-request signal, so this mirrors the
+sibling-repo file-only posture rather than inventing new scope.
+
+### Fixed
+- **stale dirty bits on revert** — `Store.mark_dirty` only flipped dirty bits
+  `False→True` and never cleared them, so a source edited then reverted to its
+  baseline (byte-identical) hash dropped out of the content-hash closure but
+  kept its dirty bit. `dirtygraph status` persisted those stale bits while
+  printing the smaller computed-closure headline, and a later `rederive` redid
+  nodes whose source was now byte-identical to the baseline (wasted work, wasted
+  LLM calls under the `codegraph` adapter + `DIRTYGRAPH_LLM`). `mark_dirty` now
+  reconciles the persisted dirty set to the computed closure — clearing bits
+  for nodes outside it — so the dirty set is always exactly the content-hash
+  closure (true Bazel-style content invalidation). Safe for failed-rederive
+  retry: a failed node's hash is never re-stamped, so it stays in the closure.
+- **stale `.build_metadata.yaml` `published_version`** — stuck at `v0.1.0`
+  while `version` was `v0.3.0`; cleared so the local cache no longer advertises
+  a pre-`v0.3.0` release as the latest published truth.
+
 ## [0.3.0] - 2026-08-22
 
 Incremental re-derive-on-event + build/publish reconciliation + a CRG-init
@@ -86,7 +107,8 @@ re-derives only the stale closure when a source file changes.
   code-review-graph SQLite) plus an optional DeepSeek/Qwen re-summarize path
   behind an environment variable.
 
-[Unreleased]: https://github.com/SuperMarioYL/dirtygraph/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/SuperMarioYL/dirtygraph/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.4.0
 [0.3.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.3.0
 [0.2.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.2.0
 [0.1.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.1.0

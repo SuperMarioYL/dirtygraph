@@ -124,17 +124,28 @@ def mark_dirty(
     current_hashes: Optional[Dict[str, str]] = None,
     persist: bool = False,
 ) -> DirtyResult:
-    """Compute the dirty closure and set the dirty bit on it in ``store``.
+    """Compute the dirty closure and reconcile the store's dirty set to it.
 
-    This is the mutating entry point used by ``dirtygraph status`` (persist the
-    flags so a later ``rederive`` sees them) and by the ``watch`` loop on each
-    file event. Nodes outside the closure are left untouched — a node that was
-    already dirty from a previous pass stays dirty (its file may still be
-    unhashed/clean-pending until re-derived).
+    The mutating entry point used by ``touch`` / ``scan`` / ``rederive`` and the
+    ``watch`` loop. The dirty set is made EXACTLY equal to the content-hash
+    closure: bits are cleared for nodes that left the closure and set for nodes
+    in it. This is the Bazel-style content-invalidation guarantee — the dirty set
+    is always the closure, never a stale superset of it. Without the clear, a
+    source edited then reverted to its baseline hash would drop out of the
+    closure but keep its dirty bit, so a later ``rederive`` would redo
+    byte-identical nodes (wasted work, wasted LLM calls under ``codegraph``).
+
+    Safe for the failed-rederive-retry path: a node whose adapter raised is
+    never re-stamped, so its on-disk hash still differs from the recorded one
+    and it stays IN the closure (not cleared) until a later pass succeeds.
 
     Returns the :class:`DirtyResult` so the caller can print the benchmark line.
     """
     result = compute_dirty_closure(store, graph, current_hashes=current_hashes)
+    # Reconcile the dirty set to the closure before (re)setting it: clear stale
+    # bits for nodes that are no longer in the closure (e.g. a source reverted
+    # to its baseline hash) so the persisted set always equals the closure.
+    store.clear_dirty(set(store.dirty_nodes()) - result.closure)
     store.mark_dirty(result.closure)
     if persist:
         store.save()
