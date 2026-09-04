@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-05
+
+Bug-hunt + benchmark-clarity release. Three fixes close reconciliation and
+performance gaps the v0.4.0 release left open; one feature completes the
+before/after benchmark the watch loop already printed.
+
+### Fixed
+- **`status --write` kept stale dirty bits on revert** — the v0.4.0
+  reconciliation fix only covered the `dirty.mark_dirty` engine path; `status`
+  called `Store.mark_dirty` directly (which only sets bits, never clears them),
+  so a source edited then reverted to its baseline hash kept its stale dirty
+  bit through the default `status --write`, and a later `rederive` redid
+  byte-identical-to-baseline nodes. `status` now routes its write through the
+  reconciling engine so the persisted dirty set is always exactly the
+  content-hash closure.
+- **`rederive` re-stamped shared source paths, breaking failed-retry safety** —
+  `stamp_hashes` writes a fresh hash onto every node sharing a source path,
+  including failed siblings whose adapter raised, so a later `mark_dirty`
+  reconciliation saw the failed node's file as clean, cleared its dirty bit, and
+  silently dropped it from retry. `rederive` now excludes any source path with
+  a failed node from the checkpoint, so a failed node's recorded hash stays
+  stale and it remains retriable until it succeeds (true for the shared-source
+  case the v0.4.0 safety claim did not actually cover).
+- **`add` full-tree-hashed to stamp one node** — `add` re-hashed every tracked
+  source file on each invocation to stamp a single new node (O(N) per add,
+  O(N²) for scripted node-by-node construction). It now hashes only the new
+  source file, matching the m5 targeted-hashing posture `touch` and `rederive`
+  already have.
+
+### Added
+- `dirtygraph rederive` now prints the dirty-closure before-count
+  (`N dirty of TOTAL`) ahead of the `re-derived M nodes` after-count, matching
+  the `watch --rederive` two-line benchmark. Failed node details
+  (`! node_id: error`) now print by default rather than only under `--verbose`,
+  since under `DIRTYGRAPH_LLM` a failure means a wasted call and is actionable.
+
 ## [0.4.0] - 2026-08-27
 
 File-only bug-hunt release: no live feature-request signal, so this mirrors the
@@ -107,7 +143,8 @@ re-derives only the stale closure when a source file changes.
   code-review-graph SQLite) plus an optional DeepSeek/Qwen re-summarize path
   behind an environment variable.
 
-[Unreleased]: https://github.com/SuperMarioYL/dirtygraph/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/SuperMarioYL/dirtygraph/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.5.0
 [0.4.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.4.0
 [0.3.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.3.0
 [0.2.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.2.0

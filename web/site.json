@@ -3,6 +3,7 @@
   "name": "dirtygraph",
   "github": "https://github.com/SuperMarioYL/dirtygraph",
   "host": "dirtygraph.lei6393.com",
+  "meta": { "content_version": "v0.5.0" },
   "lang": { "primary": "zh", "toggle": true },
   "accent": ["#e6a144", "#cf8a35", "#b87a2b"],
   "hero": {
@@ -38,7 +39,7 @@
         "zh": "状态命令打印脏闭包大小；加 --why 还能逐节点说明——是源文件直接改了，还是沿依赖边传过来的。",
         "en": "Status prints the dirty-closure size; --why explains each node — a direct source change or propagated along an edge."
       },
-      "chips": ["› 4 dirty of 1,203", "› --why 逐节点解释"]
+      "chips": ["› 4 dirty of 1,203", "› --why 逐节点解释", "› rederive 改前/改后对比"]
     },
     {
       "title": { "zh": "国产模型重算脏闭包", "en": "Re-summarize the closure with CN models" },

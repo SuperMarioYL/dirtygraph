@@ -199,9 +199,12 @@ def add(
     store = Store.load(base) if Store.exists(base) else Store(root=base)
     rel = _as_relative(source, base)
     entry = store.add(node_id, rel, label=label)
-    # Hash the new source immediately so a later status only fires on a real edit.
-    h = store.compute_hashes()
-    store.stamp_hashes({entry.source_path: h.get(entry.source_path, "")})
+    # Hash ONLY the new source so a later status fires on a real edit. A full
+    # tree scan here would re-read every tracked file on each add — O(N) per
+    # node and O(N**2) for scripted node-by-node construction. The m5
+    # targeted-hashing posture applies: hash the one file that changed.
+    new_hash = hash_file(source.resolve())
+    store.stamp_hashes({entry.source_path: new_hash})
     store.save()
     typer.secho(
         f"added node {node_id!r} <- {rel}", fg=typer.colors.GREEN
@@ -355,11 +358,20 @@ def status(
     base = root.resolve()
     store = _open_store(base)
     graph = _build_depgraph(store, base)
-    result = compute_dirty_closure(store, graph)
+    # Hash the tree once and thread the snapshot through so the write path can
+    # reuse the reconciling engine without a second disk scan.
+    current_hashes = store.compute_hashes()
+    result = compute_dirty_closure(store, graph, current_hashes=current_hashes)
 
     if write:
-        store.mark_dirty(result.closure)
-        store.save()
+        # Route the write through the reconciling engine so the persisted dirty
+        # set is always EXACTLY the content-hash closure: bits are cleared for
+        # nodes that left the closure (e.g. a source reverted to its baseline
+        # hash) before the closure's bits are set. Calling Store.mark_dirty
+        # directly would only ever set bits and never clear them, leaving stale
+        # dirty bits that a later rederive would act on. current_hashes is
+        # reused so the tree is hashed exactly once.
+        mark_dirty(store, graph, current_hashes=current_hashes, persist=True)
 
     color = typer.colors.YELLOW if not result.is_clean else typer.colors.GREEN
     typer.secho(f"dirty closure: {result.headline()}", fg=color)
@@ -449,7 +461,11 @@ def rederive(
     # Hash the tree ONCE and thread the snapshot into the engine so it does not
     # re-hash on the checkpoint pass.
     current_hashes = store.compute_hashes()
-    mark_dirty(store, graph, current_hashes=current_hashes, persist=False)
+    dirty_result = mark_dirty(store, graph, current_hashes=current_hashes, persist=False)
+    # Print the before-count so the benchmark reads as a before/after pair
+    # (the watch --rederive loop already prints both lines), not just the
+    # after line — the plan calls this the "star-the-repo" moment.
+    typer.secho(f"dirty closure: {dirty_result.headline()}", fg=typer.colors.YELLOW)
 
     try:
         impl = get_adapter(adapter)
@@ -467,9 +483,10 @@ def rederive(
             f"  {_fmt(result.failed_count)} failed (dirty bit kept)",
             fg=typer.colors.RED,
         )
-        if verbose:
-            for nid, err in result.failed.items():
-                typer.echo(f"    ! {nid}: {err}")
+        # Always surface failed nodes: under DIRTYGRAPH_LLM a failure means a
+        # wasted call and is actionable, not just verbose detail.
+        for nid, err in result.failed.items():
+            typer.echo(f"    ! {nid}: {err}")
     if verbose:
         for nid in result.rederived:
             typer.echo(f"  + {nid}")

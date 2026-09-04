@@ -189,8 +189,22 @@ def rederive(
 
     # Re-stamp hashes for every successfully re-derived source so the next
     # change-detection pass sees these files as clean (no-op on second run).
-    if cleaned_paths:
-        store.stamp_hashes(cleaned_paths)
+    # A source path shared by several nodes must NOT be checkpointed if ANY node
+    # sharing it failed: stamp_hashes writes the fresh hash onto every node with
+    # that path, including failed siblings, which would make a later mark_dirty
+    # reconciliation drop the failed node from the closure (its hash would now
+    # match disk) and clear its dirty bit — silently dropping it from retry.
+    # Excluding failed paths keeps a failed node's recorded hash stale so it
+    # stays in the closure and remains retriable until it succeeds.
+    failed_paths = {
+        e.source_path for nid in result.failed
+        if (e := store.get(nid)) is not None
+    }
+    checkpoint = {
+        path: h for path, h in cleaned_paths.items() if path not in failed_paths
+    }
+    if checkpoint:
+        store.stamp_hashes(checkpoint)
 
     if persist:
         store.save()

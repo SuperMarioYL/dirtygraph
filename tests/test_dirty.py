@@ -615,3 +615,196 @@ def test_targeted_current_hashes_only_reads_changed_paths(tmp_path: Path, monkey
     result = mark_dirty(store, graph, current_hashes=snapshot, persist=False)
     assert result.changed_paths == {"src/f3.py", "src/f7.py"}
 
+
+# --------------------------------------------------------------------------- #
+# v0.5.0: status --write reconciliation + shared-source failed-retry +        #
+#         add targeted hash + rederive before-count                           #
+# --------------------------------------------------------------------------- #
+
+
+def test_status_write_reconciles_dirty_bits_on_revert(chain):
+    """`status --write` (the default) must reconcile the dirty set to the
+    content-hash closure: a source edited then reverted to its baseline hash
+    has its stale dirty bit cleared. Regression for
+    fix-status-write-stale-dirty-bits — the v0.4.0 engine fix only covered the
+    `dirty.mark_dirty` path; `status` previously called `Store.mark_dirty`
+    directly, which only sets bits and never clears them."""
+    from typer.testing import CliRunner
+
+    import dirtygraph.cli as cli_mod
+
+    store, graph, files = chain
+    # Persist the propagation edges so the CLI can rebuild the graph.
+    cli_mod._save_edges(store.root, [("A", "B", None), ("B", "C", None), ("C", "D", None)])
+
+    original = files["b"].read_text(encoding="utf-8")
+
+    # Edit B -> status --write marks {B, C, D} dirty and persists.
+    _write(files["b"], original + "# scratch\n")
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["status", "--root", str(store.root)])
+    assert res.exit_code == 0, res.output
+    assert "3 dirty of 4" in res.output
+    assert set(Store.load(store.root).dirty_nodes()) == {"B", "C", "D"}
+
+    # Revert B to baseline -> status --write must clear the stale bits
+    # (reconcile to the now-empty closure), not leave them set.
+    _write(files["b"], original)
+    res2 = runner.invoke(cli_mod.app, ["status", "--root", str(store.root)])
+    assert res2.exit_code == 0, res2.output
+    assert "0 dirty of 4" in res2.output
+    assert Store.load(store.root).dirty_nodes() == []
+
+
+def test_failed_node_sharing_source_survives_reconciliation(tmp_path: Path):
+    """When two nodes share a source file and one's adapter raises while the
+    other succeeds, the failed node's recorded hash must NOT be re-stamped by
+    its sibling's success. Regression for fix-rederive-shared-source-checkpoint:
+    without the fix, stamp_hashes re-stamps the shared path, the next
+    mark_dirty reconciliation sees the file as clean, clears the failed node's
+    dirty bit, and silently drops it from retry."""
+    src = tmp_path / "src"
+    src.mkdir()
+    shared = src / "shared.py"
+    _write(shared, "# original\n")
+
+    store = Store(root=tmp_path)
+    store.add("X", "src/shared.py", label="X")
+    store.add("Y", "src/shared.py", label="Y")
+    store.stamp_hashes(store.compute_hashes())
+
+    # X -> Y: a change to X restages Y (and both are direct hits on shared.py).
+    graph = DepGraph.from_edges(["X", "Y"], [("X", "Y")])
+
+    # Edit the shared source -> both X and Y are direct hits.
+    _write(shared, "# edited\n")
+    mark_dirty(store, graph, persist=False)
+    assert set(store.dirty_nodes()) == {"X", "Y"}
+
+    # X succeeds, Y fails.
+    def boom(node):
+        if node.node_id == "Y":
+            raise RuntimeError("boom")
+        return node.node_id
+
+    adapter = callable_adapter(boom)
+    result = rederive(store, graph, adapter, persist=False)
+    assert "X" in result.rederived
+    assert "Y" in result.failed
+
+    # Y's recorded hash must NOT have been re-stamped by X's success (they
+    # share shared.py), so its on-disk hash still differs from the recorded one.
+    recorded_y = store.get("Y").content_hash
+    current = store.compute_hashes()["src/shared.py"]
+    assert recorded_y != current, "failed node's hash was re-stamped by a sibling"
+
+    # Retry: mark_dirty reconciles, but Y's source still differs from its
+    # (un-stamped) recorded hash -> Y stays in the closure and is retriable.
+    mark_dirty(store, graph, persist=False)
+    assert "Y" in store.dirty_nodes(), "failed node was dropped from retry"
+    # X re-enters too: its path wasn't checkpointed either (shared with Y).
+    assert "X" in store.dirty_nodes()
+
+
+def test_add_cli_hashes_only_the_new_file(tmp_path: Path, monkeypatch):
+    """`dirtygraph add` must hash exactly one source file from disk regardless
+    of how many nodes are already tracked. Regression for fix-add-full-tree-hash:
+    previously it called store.compute_hashes(), a full-tree scan that re-reads
+    every tracked file on each add."""
+    from typer.testing import CliRunner
+
+    import dirtygraph.cli as cli_mod
+    import dirtygraph.store as store_mod
+
+    store, graph, src = _wide_graph(tmp_path, n=50)
+    new_src = src / "new_node.py"
+    _write(new_src, "# new\n")
+
+    real_hash_file = store_mod.hash_file
+    calls = {"n": 0}
+
+    def counting_hash_file(p):
+        calls["n"] += 1
+        return real_hash_file(p)
+
+    monkeypatch.setattr(cli_mod, "hash_file", counting_hash_file)
+
+    runner = CliRunner()
+    res = runner.invoke(
+        cli_mod.app, ["add", "NEW", str(new_src), "--root", str(tmp_path)]
+    )
+    assert res.exit_code == 0, res.output
+    # Exactly one disk read (the new file); no full-tree scan.
+    assert calls["n"] == 1, f"expected 1 hash_file call, got {calls['n']}"
+
+    # The new node's recorded hash matches the file (not MISSING_HASH).
+    reloaded = store_mod.Store.load(tmp_path)
+    assert reloaded.recorded_hash("src/new_node.py") == real_hash_file(new_src)
+
+
+def test_rederive_cli_prints_before_and_after_lines(chain):
+    """`dirtygraph rederive` prints the dirty-closure before-count line AND the
+    re-derived after-count line, matching the watch --rederive two-line
+    benchmark (feature-rederive-benchmark-clarity)."""
+    from typer.testing import CliRunner
+
+    import dirtygraph.cli as cli_mod
+
+    store, graph, files = chain
+    cli_mod._save_edges(store.root, [("A", "B", None), ("B", "C", None), ("C", "D", None)])
+
+    _write(files["c"], "# edited c\n")
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["rederive", "--root", str(store.root)])
+    assert res.exit_code == 0, res.output
+    # Before-count line (dirty closure size).
+    assert "dirty closure:" in res.output
+    assert "2 dirty of 4" in res.output
+    # After-count line (re-derived).
+    assert "re-derived" in res.output
+    assert "2 nodes" in res.output
+
+
+def test_rederive_cli_surfaces_failed_nodes_by_default(chain):
+    """Failed node details print without --verbose under the rederive CLI
+    (feature-rederive-benchmark-clarity) — under DIRTYGRAPH_LLM a failure is
+    actionable, not verbose detail."""
+    from typer.testing import CliRunner
+
+    import dirtygraph.cli as cli_mod
+
+    store, graph, files = chain
+    cli_mod._save_edges(store.root, [("A", "B", None), ("B", "C", None), ("C", "D", None)])
+
+    _write(files["c"], "# edited c\n")
+    # Inject a failing codegraph adapter via the registry so the CLI picks it up.
+    from dirtygraph.adapters.base import Adapter
+    from dirtygraph.rederive import NodeView
+
+    class BoomAdapter(Adapter):
+        name = "boom"
+
+        def re_derive(self, node: NodeView):
+            if node.node_id == "D":
+                raise RuntimeError("boom")
+            return node.node_id
+
+    import dirtygraph.adapters as adapters_mod
+
+    monkeypatch_backup = dict(adapters_mod.ADAPTERS)
+    adapters_mod.ADAPTERS["boom"] = BoomAdapter
+    try:
+        runner = CliRunner()
+        res = runner.invoke(
+            cli_mod.app,
+            ["rederive", "--adapter", "boom", "--root", str(store.root)],
+        )
+        assert res.exit_code == 0, res.output
+        # The failed node is named without --verbose.
+        assert "D" in res.output
+        assert "boom" in res.output
+    finally:
+        adapters_mod.ADAPTERS.clear()
+        adapters_mod.ADAPTERS.update(monkeypatch_backup)
+
+
