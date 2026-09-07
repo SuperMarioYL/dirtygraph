@@ -28,3 +28,6 @@ jobs:
 
       - name: Test
         run: pytest -q
+
+      - name: Run documented demo
+        run: python examples/demo.py

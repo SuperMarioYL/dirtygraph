@@ -1,0 +1,57 @@
+{
+  "version": "0.5.0",
+  "fixture": "eight real source files; constructed example, not a performance benchmark",
+  "nodes": [
+    "auth",
+    "session",
+    "views",
+    "api",
+    "invoice",
+    "billing",
+    "search",
+    "logger"
+  ],
+  "dependencies": [
+    [
+      "session",
+      "auth"
+    ],
+    [
+      "views",
+      "session"
+    ],
+    [
+      "api",
+      "views"
+    ],
+    [
+      "billing",
+      "invoice"
+    ]
+  ],
+  "changed_file": "auth.py",
+  "affected": [
+    "auth",
+    "session",
+    "views",
+    "api"
+  ],
+  "steps": [
+    {
+      "command": "dirtygraph status",
+      "output": "dirty closure: 0 dirty of 8"
+    },
+    {
+      "command": "dirtygraph status --why",
+      "output": "dirty closure: 4 dirty of 8\n  changed sources: 1\n  direct hits: 1 | propagated: 3\n  [propagated] api  via auth -> session -> views -> api\n  [direct]    auth  <- source: auth.py\n  [propagated] session  via auth -> session\n  [propagated] views  via auth -> session -> views"
+    },
+    {
+      "command": "dirtygraph rederive --adapter codegraph --verbose",
+      "output": "dirty closure: 4 dirty of 8\nre-derived 4 nodes (of 8)\n  + auth\n  + session\n  + views\n  + api"
+    },
+    {
+      "command": "dirtygraph rederive --adapter codegraph",
+      "output": "dirty closure: 0 dirty of 8\nre-derived 0 nodes (of 8)"
+    }
+  ]
+}

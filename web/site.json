@@ -1,76 +1,186 @@
 {
-  "schema": 1,
-  "name": "dirtygraph",
+  "schema": 2,
+  "name": "DirtyGraph",
   "github": "https://github.com/SuperMarioYL/dirtygraph",
   "host": "dirtygraph.lei6393.com",
-  "meta": { "content_version": "v0.5.0" },
-  "lang": { "primary": "zh", "toggle": true },
-  "accent": ["#e6a144", "#cf8a35", "#b87a2b"],
+  "lang": {
+    "primary": "zh",
+    "toggle": true
+  },
+  "accent": [
+    "#c78b36"
+  ],
   "hero": {
-    "eyebrow": {
-      "zh": "增量重算 · 脏闭包 · 国产模型",
-      "en": "Incremental · Dirty closure · CN models"
-    },
     "headline": {
-      "zh": "文件一改，\n只重算变脏的几个节点",
-      "en": "Edit one file,\nre-derive only the stale nodes"
+      "zh": "改了一个文件，\n只重算受影响的节点。",
+      "en": "One file changed.\nRecompute the affected nodes."
     },
     "sub": {
-      "zh": "给已有的代码知识图谱接上 Bazel 式脏标记：只重算受影响闭包，而不是整库重扫。",
-      "en": "Bazel-style dirty-marking for your existing code knowledge-graph: re-derive only the affected closure, not the whole graph."
+      "zh": "给已有代码图谱加上变更追踪。文件修改后，找出它影响的节点，按依赖顺序重算；无关节点保持原样。",
+      "en": "Add change tracking to an existing code graph. Find the nodes affected by an edit and re-derive them in dependency order. Leave unrelated nodes alone."
     },
-    "command": "dirtygraph status",
-    "cta": { "zh": "查看 GitHub", "en": "View on GitHub" },
-    "ctaGithub": { "zh": "GitHub 仓库", "en": "GitHub repo" },
-    "scroll": { "zh": "向下看为什么", "en": "See why it matters" }
+    "cta": {
+      "zh": "运行示例",
+      "en": "Run the example"
+    },
+    "href": "#quickstart"
   },
   "advantages": [
     {
-      "title": { "zh": "改一个文件，不必重扫整库", "en": "Edit a file, skip the full re-scan" },
-      "body": {
-        "zh": "靠内容哈希找出真正改动的源文件，只把它们派生的节点标脏。1200 个节点的图里，改一个叶子只标脏 3 个。",
-        "en": "Content-hash diff finds only the files that really changed and marks just the nodes they derive. On a 1,200-node graph, editing one leaf dirties 3."
+      "title": {
+        "zh": "看清一次修改影响了哪里",
+        "en": "See the reach of an edit"
       },
-      "chips": ["› 内容未变即跳过", "› 只标脏受影响闭包"]
+      "body": {
+        "zh": "status --why 区分源文件直接变化与依赖传播，逐节点说明为什么需要重算。",
+        "en": "status --why distinguishes a changed source from its downstream effects and explains why each node is stale."
+      }
     },
     {
-      "title": { "zh": "看清每个脏节点的来由", "en": "See why every node is stale" },
-      "body": {
-        "zh": "状态命令打印脏闭包大小；加 --why 还能逐节点说明——是源文件直接改了，还是沿依赖边传过来的。",
-        "en": "Status prints the dirty-closure size; --why explains each node — a direct source change or propagated along an edge."
+      "title": {
+        "zh": "保留你已经建立的图谱",
+        "en": "Keep the graph you already have"
       },
-      "chips": ["› 4 dirty of 1,203", "› --why 逐节点解释", "› rederive 改前/改后对比"]
+      "body": {
+        "zh": "读取 graphify JSON 或 code-review-graph SQLite，用独立状态文件记录变更，不修改导入的原图。",
+        "en": "Read graphify JSON or code-review-graph SQLite. Track changes in separate state files without modifying the imported graph."
+      }
     },
     {
-      "title": { "zh": "国产模型重算脏闭包", "en": "Re-summarize the closure with CN models" },
-      "body": {
-        "zh": "把脏闭包交给 DeepSeek / Qwen 重新摘要；端点不稳时自动回退到本地摘要，重算批次永不因网络中断。",
-        "en": "Hand the dirty closure to DeepSeek / Qwen for re-summarization; falls back to a local summary on any endpoint error so a batch never dies on a flaky network."
+      "title": {
+        "zh": "无改动，就不调用重算",
+        "en": "No new edit, no re-derivation"
       },
-      "chips": ["› DeepSeek / Qwen", "› 失败软回退"]
-    },
-    {
-      "title": { "zh": "watch 实时标脏，改了就知道", "en": "Watch marks dirty, live" },
       "body": {
-        "zh": "文件一存，watch 立即重算脏闭包并打印；它自己写状态文件不会再触发循环。",
-        "en": "On every save, watch recomputes the dirty closure and prints it; its own state writes never re-trigger the loop."
-      },
-      "chips": ["› 文件事件即标脏", "› 无写循环"]
+        "zh": "只对受影响节点调用 adapter。成功后更新状态；没有新修改时，下一次重算的节点数为零。",
+        "en": "Call the adapter only for affected nodes. Checkpoint successful calls; with no further edit, the next pass re-derives zero nodes."
+      }
     }
   ],
-  "scene": { "kind": "mesh" },
-  "cta": {
-    "headline": {
-      "zh": "把整库重扫，换成只重算脏的",
-      "en": "Swap the full re-scan for a dirty-only re-derive"
+  "demo": {
+    "title": {
+      "zh": "改动如何沿依赖传播",
+      "en": "Follow a change through the graph"
     },
-    "sub": {
-      "zh": "接入你已有的 graphify 或 code-review-graph 输出，立刻看到『重算 4 个节点而非 1200 个』。",
-      "en": "Point it at your existing graphify or code-review-graph output and see 're-derived 4 nodes instead of 1,200'."
+    "note": {
+      "zh": "8 个真实源文件构成的演示样例。以下是实际 CLI 输出，不是性能基准。",
+      "en": "A constructed example with 8 real source files. These are actual CLI outputs, not a performance benchmark."
     },
-    "button": { "zh": "在 GitHub 上试用", "en": "Try it on GitHub" }
+    "source": "https://github.com/SuperMarioYL/dirtygraph/blob/main/examples/demo.py",
+    "steps": [
+      {
+        "label": {
+          "zh": "初始状态",
+          "en": "Clean"
+        },
+        "body": {
+          "zh": "所有源文件与记录一致，当前没有节点需要重算。",
+          "en": "All source files match their checkpoints. No node needs re-derivation."
+        },
+        "image": "/assets/demo-0-light.svg",
+        "imageDark": "/assets/demo-0-dark.svg",
+        "command": "dirtygraph status",
+        "output": "dirty closure: 0 dirty of 8"
+      },
+      {
+        "label": {
+          "zh": "修改文件",
+          "en": "Edit"
+        },
+        "body": {
+          "zh": "修改 auth.py 后，auth、session、views、api 需要重算。其余 4 个节点不受影响。",
+          "en": "After editing auth.py, auth, session, views and api need re-derivation. The other 4 nodes are unaffected."
+        },
+        "image": "/assets/demo-1-light.svg",
+        "imageDark": "/assets/demo-1-dark.svg",
+        "command": "dirtygraph status --why",
+        "output": "dirty closure: 4 dirty of 8\n  changed sources: 1\n  direct hits: 1 | propagated: 3\n  [propagated] api  via auth -> session -> views -> api\n  [direct]    auth  <- source: auth.py\n  [propagated] session  via auth -> session\n  [propagated] views  via auth -> session -> views"
+      },
+      {
+        "label": {
+          "zh": "重算节点",
+          "en": "Re-derive"
+        },
+        "body": {
+          "zh": "按依赖顺序重算这 4 个节点，成功后更新状态。",
+          "en": "Re-derive the 4 nodes in dependency order and checkpoint successful calls."
+        },
+        "image": "/assets/demo-2-light.svg",
+        "imageDark": "/assets/demo-2-dark.svg",
+        "command": "dirtygraph rederive --adapter codegraph --verbose",
+        "output": "dirty closure: 4 dirty of 8\nre-derived 4 nodes (of 8)\n  + auth\n  + session\n  + views\n  + api"
+      },
+      {
+        "label": {
+          "zh": "再次运行",
+          "en": "Run again"
+        },
+        "body": {
+          "zh": "没有新修改，再运行时不会重复重算。",
+          "en": "With no further edit, the next pass re-derives zero nodes."
+        },
+        "image": "/assets/demo-3-light.svg",
+        "imageDark": "/assets/demo-3-dark.svg",
+        "command": "dirtygraph rederive --adapter codegraph",
+        "output": "dirty closure: 0 dirty of 8\nre-derived 0 nodes (of 8)"
+      }
+    ]
   },
+  "quickstart": {
+    "title": {
+      "zh": "在本地跑一遍。",
+      "en": "Run it locally."
+    },
+    "body": {
+      "zh": "需要 Python 3.12 或更高版本。示例自动创建临时目录，结束后清理；不需要 API Key 或模型服务。",
+      "en": "Requires Python 3.12 or later. The example creates and cleans up a temporary directory. No API key or model service is needed."
+    },
+    "steps": [
+      {
+        "title": {
+          "zh": "获取源码并安装",
+          "en": "Get the source and install"
+        },
+        "code": "git clone https://github.com/SuperMarioYL/dirtygraph.git\ncd dirtygraph\npython3 -m venv .venv\nsource .venv/bin/activate\npython -m pip install -e ."
+      },
+      {
+        "title": {
+          "zh": "运行完整示例",
+          "en": "Run the complete example"
+        },
+        "code": "python examples/demo.py"
+      },
+      {
+        "title": {
+          "zh": "接入自己的图谱",
+          "en": "Use your own graph"
+        },
+        "code": "dirtygraph init /path/to/graph.json\ncd /path/to\n# Edit a source file referenced by the graph.\ndirtygraph status --why\ndirtygraph rederive --adapter codegraph"
+      }
+    ]
+  },
+  "limitations": [
+    {
+      "zh": "图谱需要已有的源文件路径和依赖关系；DirtyGraph 不负责从代码推断依赖或构建图谱。",
+      "en": "The input graph must include source-file paths and dependency edges. DirtyGraph does not infer dependencies or build the graph."
+    },
+    {
+      "zh": "本例验证变更检测与重算范围，不衡量耗时、token 节省或摘要质量。",
+      "en": "This example verifies change detection and re-derivation scope, not elapsed time, token savings or summary quality."
+    },
+    {
+      "zh": "CLI 会更新自身状态，但不会把重算内容写回原图。应用需要在 adapter 中保存派生内容。",
+      "en": "The CLI checkpoints its own state but does not write derived content back to the imported graph. Applications must persist derived content in their adapter."
+    }
+  ],
   "footer": {
-    "tag": { "zh": "Apache-2.0 · 免费 · 开源", "en": "Apache-2.0 · free · open source" }
+    "tag": {
+      "zh": "Apache-2.0 · Python 3.12+ · 本地运行",
+      "en": "Apache-2.0 · Python 3.12+ · Runs locally"
+    }
+  },
+  "meta": {
+    "content_version": "0.5.0",
+    "demo_source": "docs/demo-results.json"
   }
 }
