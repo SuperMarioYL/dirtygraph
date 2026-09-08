@@ -217,6 +217,10 @@
           "alt": {
             "zh": "8 文件示例：4 个受影响节点与 4 个无关节点",
             "en": "Eight-file example: four affected nodes and four untouched nodes"
+          },
+          "mobile": {
+            "light": "/assets/process-mobile-light.svg",
+            "dark": "/assets/process-mobile-dark.svg"
           }
         }
       },
@@ -235,6 +239,10 @@
           "alt": {
             "zh": "输入、变化检测、依赖传播、adapter 与 sidecar 的关系",
             "en": "Inputs, change detection, propagation, adapters and sidecar checkpoints"
+          },
+          "mobile": {
+            "light": "/assets/architecture-mobile-light.svg",
+            "dark": "/assets/architecture-mobile-dark.svg"
           }
         }
       },
@@ -253,6 +261,10 @@
           "alt": {
             "zh": "支持的 JSON、SQLite、手动输入与三类 adapter 通路",
             "en": "Supported JSON, SQLite and manual inputs with local, model and custom adapter paths"
+          },
+          "mobile": {
+            "light": "/assets/integrations-mobile-light.svg",
+            "dark": "/assets/integrations-mobile-dark.svg"
           }
         }
       }
