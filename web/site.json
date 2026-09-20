@@ -179,10 +179,10 @@
     }
   },
   "meta": {
-    "content_version": "0.5.0",
+    "content_version": "0.6.0",
     "demo_source": "docs/demo-results.json",
     "visual_direction": "neon-particle",
-    "content_baseline": "ef98dd9"
+    "content_baseline": "a40b182"
   },
   "scene": {
     "kind": "neon-graph",
