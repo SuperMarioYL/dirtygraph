@@ -123,6 +123,7 @@ def mark_dirty(
     *,
     current_hashes: Optional[Dict[str, str]] = None,
     persist: bool = False,
+    verified_paths: Optional[Set[str]] = None,
 ) -> DirtyResult:
     """Compute the dirty closure and reconcile the store's dirty set to it.
 
@@ -135,6 +136,21 @@ def mark_dirty(
     closure but keep its dirty bit, so a later ``rederive`` would redo
     byte-identical nodes (wasted work, wasted LLM calls under ``codegraph``).
 
+    ``verified_paths`` — the set of tracked source paths the caller actually
+    re-hashed from disk this pass, when ``current_hashes`` is a PARTIAL
+    (targeted) snapshot like the ones ``touch`` and the ``watch`` loop build:
+    there, untouched paths are preset to their recorded hash, so a node outside
+    the closure means "not checked", not "verified clean" — clearing its bit
+    would drop a real pending change from the invalidation state. With
+    ``verified_paths``, only nodes whose staleness is REFUTED by this pass are
+    cleared: a dirty node outside the closure whose own source was re-checked
+    and found unchanged (the revert case) — and that is not itself downstream
+    of another dirty node whose staleness is still unverified (propagated
+    staleness is inherited from upstream, so verifying a node's own file says
+    nothing about staleness it inherited). ``None`` (default) means the
+    snapshot covers every tracked path, so the reconciliation clears everything
+    outside the closure exactly as before.
+
     Safe for the failed-rederive-retry path: a node whose adapter raised is
     never re-stamped, so its on-disk hash still differs from the recorded one
     and it stays IN the closure (not cleared) until a later pass succeeds.
@@ -142,10 +158,30 @@ def mark_dirty(
     Returns the :class:`DirtyResult` so the caller can print the benchmark line.
     """
     result = compute_dirty_closure(store, graph, current_hashes=current_hashes)
-    # Reconcile the dirty set to the closure before (re)setting it: clear stale
-    # bits for nodes that are no longer in the closure (e.g. a source reverted
-    # to its baseline hash) so the persisted set always equals the closure.
-    store.clear_dirty(set(store.dirty_nodes()) - result.closure)
+    # Reconcile the dirty set to the closure before (re)setting it. With a full
+    # snapshot, every node outside the closure is verified stale (e.g. a source
+    # reverted to its baseline hash) and may be cleared. With a targeted
+    # snapshot, only refuted staleness may be cleared: a node whose own source
+    # was re-checked and found unchanged, minus everything still downstream of
+    # an unverified dirty node (propagated staleness is inherited from upstream,
+    # so a verified-own-file says nothing about staleness a node inherited).
+    dirty_now = set(store.dirty_nodes())
+    if verified_paths is None:
+        stale = dirty_now - result.closure
+    else:
+        candidates = dirty_now - result.closure
+        verified_unchanged = set(verified_paths) - result.changed_paths
+        unverified = {
+            node_id
+            for node_id in candidates
+            if (entry := store.get(node_id)) is not None
+            and entry.source_path not in verified_unchanged
+        }
+        # Everything downstream of an unverified dirty node may have inherited
+        # its staleness, so it cannot be refuted by this pass either.
+        inherited = graph.reachable(unverified) if unverified else set()
+        stale = candidates - inherited
+    store.clear_dirty(stale)
     store.mark_dirty(result.closure)
     if persist:
         store.save()

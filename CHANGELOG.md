@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-21
+
+Invalidation-correctness release. Two fixes close the remaining ways a real
+pending change could silently vanish from the dirty set — through the targeted
+`touch`/`watch` reconciliation and through `add`'s shared-source stamping.
+
+### Fixed
+- **targeted passes cleared dirty bits they never verified** — the v0.4.0
+  reconciliation in `mark_dirty` assumed the hash snapshot covers every tracked
+  path, but `touch` and the `watch` loop build a *targeted* snapshot that
+  presets every untouched path to its recorded hash. For those paths "outside
+  the closure" meant *not checked*, not *verified clean*: touching an unrelated
+  file computed an empty closure, the reconciliation cleared the pending dirty
+  bits of a real edit elsewhere, and `touch` printed `0 dirty total` while the
+  edit was still live (in a live `watch` session the pending change stayed
+  invisible until the file itself fired another event). `mark_dirty` now takes
+  a `verified_paths` set: only staleness the pass actually refuted is cleared —
+  a node whose own source was re-checked and found unchanged, and that does not
+  sit downstream of an unverified dirty node (propagated staleness is inherited
+  from upstream, so verifying a node's own file says nothing about staleness it
+  inherited). Full-scan callers (`scan` / `status` / `rederive`) are unchanged;
+  `touch` now reports the persisted dirty count, so the printed `N` reflects
+  what a following `rederive` would act on.
+- **`add` advanced a shared source checkpoint past un-re-derived content** —
+  `add` stamped the fresh hash onto *every* node sharing the source path, so
+  adding a node to a file with a pending un-re-derived edit made the next
+  change-detection pass read the file as clean, the reconciliation cleared the
+  dirty sibling, and the edit was silently masked (never re-derived). This is
+  the same loss class the v0.5.0 release fixed for the rederive checkpoint; the
+  `add` path now joins the new node to the pending closure with the recorded
+  (stale) hash instead, so the whole path is checkpointed together on the next
+  successful rederive. On a clean path the fresh hash is still recorded and
+  exactly one file is still hashed.
+
 ## [0.5.0] - 2026-09-05
 
 Bug-hunt + benchmark-clarity release. Three fixes close reconciliation and
@@ -143,7 +177,8 @@ re-derives only the stale closure when a source file changes.
   code-review-graph SQLite) plus an optional DeepSeek/Qwen re-summarize path
   behind an environment variable.
 
-[Unreleased]: https://github.com/SuperMarioYL/dirtygraph/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/SuperMarioYL/dirtygraph/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.6.0
 [0.5.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.5.0
 [0.4.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.4.0
 [0.3.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.3.0

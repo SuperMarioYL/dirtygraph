@@ -808,3 +808,193 @@ def test_rederive_cli_surfaces_failed_nodes_by_default(chain):
         adapters_mod.ADAPTERS.update(monkeypatch_backup)
 
 
+
+
+# --------------------------------------------------------------------------- #
+# v0.6.0: targeted-snapshot reconciliation safety + add shared-source stamp    #
+# --------------------------------------------------------------------------- #
+
+
+def test_targeted_reconciliation_keeps_unverified_dirty_nodes(chain):
+    """A dirty node whose source was NOT re-checked by a targeted pass keeps
+    its bit. Regression for fix-targeted-reconcile-clears-unverified-dirty:
+    mark_dirty's reconciliation assumed current_hashes covers every tracked
+    path, but touch/watch pass a targeted snapshot that presets untouched
+    paths to their recorded hash — for those paths, outside the closure means
+    not-checked, not verified-clean, and clearing the bit dropped a real
+    pending change from the invalidation state."""
+    from dirtygraph.store import hash_file
+
+    store, graph, files = chain
+
+    # Edit A's file and persist the closure {A, B, C, D}.
+    _write(files["a"], "# edited a\n")
+    mark_dirty(store, graph, persist=True)
+    assert set(store.dirty_nodes()) == {"A", "B", "C", "D"}
+
+    # Targeted pass that re-hashes ONLY b.py (untouched): every other path is
+    # preset to its recorded hash, so nothing is verified except src/b.py.
+    targeted = {s: store.recorded_hash(s) for s in store.source_paths()}
+    targeted["src/b.py"] = hash_file(files["b"])
+    result = mark_dirty(
+        store, graph, current_hashes=targeted, verified_paths={"src/b.py"},
+    )
+    assert result.changed_paths == set()
+    # The pending change on src/a.py is unverified -> its closure stays dirty.
+    assert set(store.dirty_nodes()) == {"A", "B", "C", "D"}, (
+        "targeted pass cleared dirty bits it never verified"
+    )
+
+    # A later full pass still sees the change (nothing was lost).
+    full = mark_dirty(store, graph)
+    assert full.changed_paths == {"src/a.py"}
+    assert set(store.dirty_nodes()) == {"A", "B", "C", "D"}
+
+
+def test_targeted_reconciliation_still_clears_verified_revert(chain):
+    """The v0.4.0 revert contract survives verified_paths: touching the
+    REVERTED file itself (re-checked, found unchanged) clears that node's
+    stale bit. Propagated nodes whose own sources were not re-checked keep
+    their bit until the next full pass — partial information clears only what
+    it verified."""
+    from dirtygraph.store import hash_file
+
+    store, graph, files = chain
+    original_b = files["b"].read_text(encoding="utf-8")
+
+    _write(files["b"], original_b + "# scratch\n")
+    mark_dirty(store, graph, persist=True)
+    assert "B" in store.dirty_nodes()
+
+    # Revert b.py to its baseline and touch exactly that file.
+    _write(files["b"], original_b)
+    targeted = {s: store.recorded_hash(s) for s in store.source_paths()}
+    targeted["src/b.py"] = hash_file(files["b"])
+    mark_dirty(
+        store, graph, current_hashes=targeted, verified_paths={"src/b.py"},
+    )
+    # B's own source was verified unchanged -> its stale bit is cleared.
+    assert "B" not in store.dirty_nodes()
+    # C/D were pulled in by propagation and were not re-checked -> kept.
+    assert set(store.dirty_nodes()) == {"C", "D"}
+    # The next full pass reconciles the rest to the (now empty) closure.
+    mark_dirty(store, graph)
+    assert store.dirty_nodes() == []
+
+
+def test_touch_cli_preserves_pending_dirty_state(chain):
+    """`dirtygraph touch` of an unrelated unchanged file must not clear the
+    persisted dirty set of a pending edit elsewhere. Regression for
+    fix-targeted-reconcile-clears-unverified-dirty: previously the targeted
+    pass computed an empty closure, the reconciliation cleared every pending
+    bit, and touch printed '0 dirty total' while the edit was still live."""
+    from typer.testing import CliRunner
+
+    import dirtygraph.cli as cli_mod
+
+    store, graph, files = chain
+    cli_mod._save_edges(store.root, [("A", "B", None), ("B", "C", None), ("C", "D", None)])
+
+    _write(files["a"], "# edited a\n")
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["scan", "--root", str(store.root)])
+    assert res.exit_code == 0, res.output
+    assert set(Store.load(store.root).dirty_nodes()) == {"A", "B", "C", "D"}
+
+    res2 = runner.invoke(
+        cli_mod.app, ["touch", str(files["b"]), "--root", str(store.root)]
+    )
+    assert res2.exit_code == 0, res2.output
+    # The persisted count is reported (not the empty targeted closure).
+    assert "unchanged (4 dirty total)" in res2.output
+    assert set(Store.load(store.root).dirty_nodes()) == {"A", "B", "C", "D"}
+
+
+def test_add_cli_does_not_mask_pending_edit_on_shared_source(tmp_path: Path):
+    """`dirtygraph add` on a source with a pending un-re-derived edit must not
+    re-stamp the shared checkpoint. Regression for fix-add-stamp-masks-pending-edit:
+    previously add stamped the fresh hash onto every node sharing the path, the
+    next change-detection pass read the file as clean, the reconciliation
+    cleared the dirty sibling, and the pending edit was silently masked."""
+    from typer.testing import CliRunner
+
+    import dirtygraph.cli as cli_mod
+
+    src = tmp_path / "src"
+    src.mkdir()
+    shared = src / "shared.py"
+    other = src / "other.py"
+    _write(shared, "# original\n")
+    _write(other, "# other\n")
+
+    store = Store(root=tmp_path)
+    store.add("X", "src/shared.py", label="X")
+    store.add("Z", "src/other.py", label="Z")
+    store.stamp_hashes(store.compute_hashes())
+    store.save()
+
+    # Pending edit: shared.py changes on disk; the closure is marked+persisted.
+    _write(shared, "# EDITED\n")
+    graph = DepGraph.from_edges(["X", "Z"], [])
+    mark_dirty(store, graph, persist=True)
+    stale_recorded = store.recorded_hash("src/shared.py")
+    assert "X" in store.dirty_nodes()
+
+    # Scripted construction: add a second node on the SAME source file.
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["add", "Y", str(shared), "--root", str(tmp_path)])
+    assert res.exit_code == 0, res.output
+
+    reloaded = Store.load(tmp_path)
+    # Y carries the RECORDED (stale) hash, not the fresh disk hash, so the
+    # shared checkpoint did not advance past un-re-derived content.
+    from dirtygraph.store import hash_file
+
+    assert reloaded.get("Y").content_hash == stale_recorded
+    assert reloaded.get("Y").content_hash != hash_file(shared)
+    # X's recorded hash was untouched.
+    assert reloaded.recorded_hash("src/shared.py") == stale_recorded
+
+    # The pending edit still fires: X and Y are direct hits together and both
+    # are re-derived in one pass, checkpointing the path atomically.
+    from dirtygraph.dirty import mark_dirty as md
+    from dirtygraph.rederive import callable_adapter, rederive as run_rd
+
+    result = md(reloaded, graph, persist=False)
+    assert result.changed_paths == {"src/shared.py"}
+    assert set(reloaded.dirty_nodes()) == {"X", "Y"}
+    rd = run_rd(reloaded, graph, callable_adapter(lambda n: n.node_id), persist=True)
+    assert set(rd.rederived) == {"X", "Y"}
+    assert Store.load(tmp_path).dirty_nodes() == []
+    assert Store.load(tmp_path).recorded_hash("src/shared.py") == hash_file(shared)
+
+
+def test_add_cli_stamps_fresh_hash_on_clean_shared_source(tmp_path: Path):
+    """`dirtygraph add` on a source with NO pending change still records the
+    fresh blake3 for the new node (the v0.5.0 targeted-hash contract), and
+    every node sharing the path ends up with that same hash."""
+    from typer.testing import CliRunner
+
+    import dirtygraph.cli as cli_mod
+    from dirtygraph.store import hash_file
+
+    src = tmp_path / "src"
+    src.mkdir()
+    clean = src / "clean.py"
+    _write(clean, "# stable\n")
+
+    store = Store(root=tmp_path)
+    store.add("X", "src/clean.py", label="X")
+    store.stamp_hashes(store.compute_hashes())
+    store.save()
+
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["add", "Y", str(clean), "--root", str(tmp_path)])
+    assert res.exit_code == 0, res.output
+
+    reloaded = Store.load(tmp_path)
+    fresh = hash_file(clean)
+    assert reloaded.get("Y").content_hash == fresh
+    assert reloaded.get("X").content_hash == fresh
+    # And the tree reads as clean (no phantom change invented by the add).
+    assert Store.load(tmp_path).changed_paths() == set()

@@ -198,13 +198,31 @@ def add(
     base = root.resolve()
     store = Store.load(base) if Store.exists(base) else Store(root=base)
     rel = _as_relative(source, base)
-    entry = store.add(node_id, rel, label=label)
     # Hash ONLY the new source so a later status fires on a real edit. A full
     # tree scan here would re-read every tracked file on each add — O(N) per
     # node and O(N**2) for scripted node-by-node construction. The m5
     # targeted-hashing posture applies: hash the one file that changed.
     new_hash = hash_file(source.resolve())
-    store.stamp_hashes({entry.source_path: new_hash})
+    # Sibling safety: the fresh hash may only advance the SHARED checkpoint
+    # when every node already recording this path was checkpointed against the
+    # current content. Stamping it onto siblings with a pending (dirty or
+    # not-yet-marked) edit would let the next change-detection pass read the
+    # file as clean, the reconciliation would silently drop those nodes from
+    # the closure, and they would never be re-derived — the same loss class
+    # the rederive checkpoint fix excluded failed paths from stamping for.
+    # In that case the new node joins the pending closure with the recorded
+    # (stale) hash instead, and the next successful rederive checkpoints the
+    # whole path together (one-recorded-hash-per-path stays intact).
+    siblings = [e for e in store.nodes_for_path(rel) if e.node_id != node_id]
+    if any(s.content_hash != new_hash for s in siblings):
+        recorded = store.recorded_hash(rel)
+        store.add(
+            node_id, rel,
+            content_hash=recorded if recorded is not None else MISSING_HASH,
+            label=label,
+        )
+    else:
+        store.add(node_id, rel, content_hash=new_hash, label=label)
     store.save()
     typer.secho(
         f"added node {node_id!r} <- {rel}", fg=typer.colors.GREEN
@@ -248,6 +266,20 @@ def _as_relative(path: Path, base: Path) -> str:
         return str(p)
 
 
+def _resolve_tracked(store: Store, path: Path) -> set[str]:
+    """The tracked source paths that resolve to the same on-disk file as ``path``.
+
+    Shared by the targeted hash snapshot and by ``verified_paths`` reporting:
+    both need the same "which stored source is this file?" matching, keyed by
+    the STORED source-path spelling (relative or absolute).
+    """
+    abs_path = str(path.resolve())
+    return {
+        src for src in store.source_paths()
+        if str(store.resolve(src)) == abs_path
+    }
+
+
 def _targeted_current_hashes(
     store: Store, base: Path, changed_paths: list[Path]
 ) -> dict[str, str]:
@@ -268,10 +300,8 @@ def _targeted_current_hashes(
         new_hash = hash_file(path)
         rel = _as_relative(path, base)
         targeted[rel] = new_hash
-        abs_path = str(path.resolve())
-        for src in store.source_paths():
-            if str(store.resolve(src)) == abs_path:
-                targeted[src] = new_hash
+        for src in _resolve_tracked(store, path):
+            targeted[src] = new_hash
     return targeted
 
 
@@ -294,6 +324,13 @@ def touch(
     (every other tracked source keeps its recorded hash, so it reads as
     "unchanged"); change detection therefore touches one file, not the whole
     tree.
+
+    Because the snapshot is targeted, the reconciliation only clears bits the
+    pass could actually verify (the named file's own nodes, e.g. after a
+    revert); a dirty node whose source was not re-checked keeps its bit until
+    the next full pass. The printed count is the PERSISTED dirty set after the
+    pass — what a following ``rederive`` would act on — not just this pass's
+    closure.
     """
     base = root.resolve()
     store = _open_store(base)
@@ -304,13 +341,17 @@ def touch(
     targeted = _targeted_current_hashes(store, base, [path])
     rel = _as_relative(path, base)
 
-    result = mark_dirty(store, graph, current_hashes=targeted, persist=True)
+    result = mark_dirty(
+        store, graph, current_hashes=targeted, persist=True,
+        verified_paths=_resolve_tracked(store, path),
+    )
     if rel in result.changed_paths or str(path) in result.changed_paths:
         typer.secho(
-            f"{rel} changed -> {_fmt(result.dirty_count)} dirty", fg=typer.colors.YELLOW
+            f"{rel} changed -> {_fmt(store.dirty_count)} dirty",
+            fg=typer.colors.YELLOW,
         )
     else:
-        typer.echo(f"{rel} unchanged ({_fmt(result.dirty_count)} dirty total)")
+        typer.echo(f"{rel} unchanged ({_fmt(store.dirty_count)} dirty total)")
 
 
 @app.command()
@@ -593,11 +634,17 @@ def watch(
                 changed = state["changed"]
                 state["changed"] = set()
                 reloaded = Store.load(base)
-                current = _targeted_current_hashes(
-                    reloaded, base, [Path(p) for p in changed]
-                )
+                fired = [Path(p) for p in changed]
+                current = _targeted_current_hashes(reloaded, base, fired)
+                # Only the fired (re-hashed) paths are verified this cycle;
+                # everything else is preset to its recorded hash, so the
+                # reconciliation must not clear bits it could not check.
+                verified: set[str] = set()
+                for p in fired:
+                    verified |= _resolve_tracked(reloaded, p)
                 result = mark_dirty(
-                    reloaded, graph, current_hashes=current, persist=True
+                    reloaded, graph, current_hashes=current, persist=True,
+                    verified_paths=verified,
                 )
                 if not result.is_clean:
                     typer.secho(
