@@ -13,6 +13,7 @@ These exercise the four behaviours the whole product rests on:
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -998,3 +999,133 @@ def test_add_cli_stamps_fresh_hash_on_clean_shared_source(tmp_path: Path):
     assert reloaded.get("X").content_hash == fresh
     # And the tree reads as clean (no phantom change invented by the add).
     assert Store.load(tmp_path).changed_paths() == set()
+
+
+# --------------------------------------------------------------------------- #
+# v0.7.0: truthful touch verdict + sidecar-only closure reporting             #
+# --------------------------------------------------------------------------- #
+
+
+def test_touch_cli_reports_changed_for_noncanonical_stored_spelling(tmp_path: Path):
+    """`dirtygraph touch` must report "changed" whenever the touched file
+    actually changed, whatever spelling the sidecar stores. Regression for
+    fix-touch-changed-report: a graphify JSON may spell source paths
+    non-canonically ("./src/auth.py") and load_graphify_json records that
+    spelling verbatim; the verdict used to compare only the canonical relative
+    spelling against changed_paths, so it printed "unchanged" while the same
+    pass marked and persisted the closure."""
+    from typer.testing import CliRunner
+
+    import dirtygraph.cli as cli_mod
+
+    src = tmp_path / "src"
+    src.mkdir()
+    _write(src / "auth.py", "# auth\n")
+    _write(src / "api.py", "# api\n")
+    graph = tmp_path / "graph.json"
+    graph.write_text(
+        json.dumps(
+            {
+                "directed": True,
+                "multigraph": False,
+                "graph": {},
+                "nodes": [
+                    {"id": "auth", "label": "auth", "source_file": "./src/auth.py"},
+                    {"id": "api", "label": "api", "source_file": "./src/api.py"},
+                ],
+                "links": [
+                    {"source": "api", "target": "auth", "relation": "CALLS"}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    runner = CliRunner()
+    res = runner.invoke(cli_mod.app, ["init", str(graph)])
+    assert res.exit_code == 0, res.output
+
+    # The sidecar stores the graph's own spelling verbatim.
+    store = Store.load(tmp_path)
+    assert "src/auth.py" not in store.source_paths()
+    assert "./src/auth.py" in store.source_paths()
+
+    _write(src / "auth.py", "# auth EDITED\n")
+    res2 = runner.invoke(
+        cli_mod.app, ["touch", str(src / "auth.py"), "--root", str(tmp_path)]
+    )
+    assert res2.exit_code == 0, res2.output
+    # The file DID change and the closure WAS persisted — the report must say so.
+    assert "changed" in res2.output
+    assert "unchanged" not in res2.output
+    assert "2 dirty" in res2.output
+    # ...and the persisted state agrees with the printed verdict.
+    assert set(Store.load(tmp_path).dirty_nodes()) == {"auth", "api"}
+
+
+def test_touch_cli_untracked_file_reports_unchanged(tmp_path: Path):
+    """Touching a file the sidecar does not track still reads as "unchanged"
+    (an empty resolved-spelling set must not turn into a false "changed")."""
+    from typer.testing import CliRunner
+
+    import dirtygraph.cli as cli_mod
+
+    store, graph, src = _wide_graph(tmp_path, n=5)
+    stranger = tmp_path / "stranger.py"
+    _write(stranger, "# not tracked\n")
+
+    runner = CliRunner()
+    res = runner.invoke(
+        cli_mod.app, ["touch", str(stranger), "--root", str(tmp_path)]
+    )
+    assert res.exit_code == 0, res.output
+    assert "unchanged" in res.output
+    assert "0 dirty total" in res.output
+
+
+def test_closure_excludes_sidecar_less_propagation_nodes(tmp_path: Path):
+    """A propagation edge may name an endpoint with no sidecar row (`link`
+    accepts any id; a dangling input-graph link does too). Such a node has no
+    provenance, no source hash and no dirty bit — rederive can never act on it
+    — so it must not be counted in the dirty closure: "N dirty of TOTAL" cannot
+    exceed TOTAL and --why must not explain it. Regression for
+    fix-phantom-closure-count: the closure used to copy every reachable graph
+    node, so a 1-node sidecar with a link to an unregistered id reported
+    "2 dirty of 1"."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _write(src / "a.py", "# a\n")
+
+    store = Store(root=tmp_path)
+    store.add("A", "src/a.py", label="A")
+    store.stamp_hashes(store.compute_hashes())
+
+    # A -> GHOST: declared propagation target, never registered in the sidecar.
+    graph = DepGraph.from_edges(["A", "GHOST"], [("A", "GHOST")])
+    assert "GHOST" in graph  # the graph tolerates the unknown endpoint (by design)
+
+    _write(src / "a.py", "# edited a\n")
+    result = compute_dirty_closure(store, graph)
+    assert result.closure == {"A"}
+    assert result.headline() == "1 dirty of 1"
+    assert all(nid in store for nid in result.closure)
+
+    # Persisted reconciliation is unchanged: A dirty, nothing else.
+    mark_dirty(store, graph, persist=False)
+    assert store.dirty_nodes() == ["A"]
+
+    # --why explains only nodes the store tracks.
+    causes = {c.node_id for c in explain_dirty(store, graph, result)}
+    assert causes == {"A"}
+
+    # Propagation THROUGH a phantom still applies to real downstream nodes:
+    # B is registered and sits behind the phantom, so it must be restaged.
+    _write(src / "b.py", "# b\n")
+    store.add("B", "src/b.py", label="B")
+    store.stamp_hashes(store.compute_hashes())
+    graph2 = DepGraph.from_edges(
+        list(store.node_ids) + ["GHOST"], [("A", "GHOST"), ("GHOST", "B")]
+    )
+    _write(src / "a.py", "# edited a again\n")
+    result2 = compute_dirty_closure(store, graph2)
+    assert result2.closure == {"A", "B"}  # B reached through GHOST, GHOST excluded

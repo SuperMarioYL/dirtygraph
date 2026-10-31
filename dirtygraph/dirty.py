@@ -108,6 +108,14 @@ def compute_dirty_closure(
     closure: Set[str] = set(direct)
     if in_graph:
         closure |= graph.reachable(in_graph)
+    # A propagation edge may name an endpoint with no sidecar row (a `link` to
+    # an unregistered id, or a dangling link in the input graph). Such a node
+    # has no provenance, no source hash and no dirty bit — rederive can never
+    # act on it — so it must not be counted as dirty: report only nodes the
+    # store tracks. Propagation THROUGH such a node still applies (the declared
+    # edges decide reachability); only the reported closure is filtered, and
+    # mark_dirty's store effects are unchanged (phantoms never carry bits).
+    closure = {node_id for node_id in closure if node_id in store}
 
     return DirtyResult(
         changed_paths=changed_paths,

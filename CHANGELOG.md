@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-31
+
+Correctness-of-reporting release. Three fixes close the gap between what the
+invalidation engine actually did and what the CLI said it did; a lockstep test
+pins every shipped version surface to the release version.
+
+### Fixed
+- **`touch` reported "unchanged" for a change it registered** — the verdict
+  compared the touched path's canonical relative spelling against
+  `changed_paths`, but the sidecar stores the graph file's own spelling
+  verbatim, so a graphify JSON that spells sources `./src/auth.py` recorded
+  exactly that. Touching `src/auth.py` marked the closure and printed
+  `unchanged (2 dirty total)` — contradicting the persisted state the same pass
+  wrote. The verdict now asks the shared resolver (`_resolve_tracked`) whether
+  any stored spelling of the touched file is in `changed_paths`.
+- **the dirty-closure headline could count nodes the store doesn't track** —
+  propagation edges may name endpoints with no sidecar row (`link` accepts any
+  id by design, and a dangling input-graph link does the same), and
+  `compute_dirty_closure` copied every reachable node into the closure. A
+  one-node sidecar with a link to an unregistered id reported `2 dirty of 1`
+  and `status --why` explained a node rederive can never act on. The closure is
+  now filtered to sidecar nodes before reporting; persisted dirty bits are
+  unchanged (phantoms never carried any), and propagation through such a node
+  still applies.
+- **`init` crashed with a traceback on unclassifiable input** — pointing init
+  at a non-graph file or directory raised a raw `ValueError` (exit 1) while
+  every other user-error path in this CLI prints a one-line error and exits 2.
+  `init` now fails with the loader's message and exit 2 (malformed JSON
+  included).
+
+### Added
+- `tests/test_version_lockstep.py` — regression test asserting `VERSION`,
+  `__version__`, `pyproject.toml`, the CHANGELOG head section and
+  `web/site.json`'s `meta.content_version` all carry the same release version.
+
 ## [0.6.0] - 2026-09-21
 
 Invalidation-correctness release. Two fixes close the remaining ways a real
@@ -177,7 +212,8 @@ re-derives only the stale closure when a source file changes.
   code-review-graph SQLite) plus an optional DeepSeek/Qwen re-summarize path
   behind an environment variable.
 
-[Unreleased]: https://github.com/SuperMarioYL/dirtygraph/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/SuperMarioYL/dirtygraph/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.7.0
 [0.6.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.6.0
 [0.5.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.5.0
 [0.4.0]: https://github.com/SuperMarioYL/dirtygraph/releases/tag/v0.4.0

@@ -179,7 +179,7 @@
     }
   },
   "meta": {
-    "content_version": "0.6.0",
+    "content_version": "0.7.0",
     "demo_source": "docs/demo-results.json",
     "visual_direction": "neon-particle",
     "content_baseline": "a40b182"

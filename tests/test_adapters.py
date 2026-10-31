@@ -456,3 +456,39 @@ def test_init_crg_store_dir_resolves_sources_against_repo_root(tmp_path: Path):
     res2 = runner.invoke(cli_mod.app, ["status", "--root", str(tmp_path)])
     assert res2.exit_code == 0, res2.output
     assert "0 dirty of 3" in res2.output
+
+
+# --------------------------------------------------------------------------- #
+# fix-init-bad-input-error: init fails cleanly on unclassifiable input        #
+# --------------------------------------------------------------------------- #
+
+
+def test_init_unclassifiable_input_fails_clean(tmp_path: Path):
+    """``dirtygraph init`` on a non-graph path must print a one-line error and
+    exit 2 — the CLI's own convention for user error (missing state, unknown
+    adapter, missing watchdog) — not render a raw ValueError traceback with
+    exit 1. Regression for fix-init-bad-input-error: detect_format raises
+    ValueError for a classifiable directory/suffix and load_graphify_json for
+    malformed JSON (a ValueError subclass); both escaped init unhandled."""
+    from typer.testing import CliRunner
+
+    import dirtygraph.cli as cli_mod
+
+    bad_dir = tmp_path / "notagraph"
+    bad_dir.mkdir()
+    bad_file = tmp_path / "notes.txt"
+    bad_file.write_text("plain text, not a graph", encoding="utf-8")
+    bad_json = tmp_path / "broken.json"
+    bad_json.write_text("{not json", encoding="utf-8")
+
+    runner = CliRunner()
+    for bad in (bad_dir, bad_file, bad_json):
+        res = runner.invoke(cli_mod.app, ["init", str(bad)])
+        assert res.exit_code == 2, (bad, res.output, res.exception)
+        # typer.Exit(2) surfaces as SystemExit(2) — the clean-exit path itself;
+        # anything else (e.g. the old ValueError) is an unhandled crash.
+        assert res.exception is None or isinstance(res.exception, SystemExit), (
+            bad, res.exception
+        )
+        assert "Traceback" not in res.output, (bad, res.output)
+        assert res.output.strip() != "", bad

@@ -152,7 +152,15 @@ def init(
     ),
 ) -> None:
     """Load an existing graph, hash every source file, and write the sidecar."""
-    loaded = load_graph(graph)
+    try:
+        loaded = load_graph(graph)
+    except ValueError as exc:
+        # Unclassifiable path or malformed JSON (JSONDecodeError is a ValueError
+        # subclass) is user error: fail with the CLI's one-line convention
+        # (clean message + exit 2), like a missing state or unknown adapter —
+        # not a raw traceback.
+        typer.secho(f"cannot load graph: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2)
     base = root if root is not None else _resolve_root(graph)
     base = base.resolve()
 
@@ -345,7 +353,11 @@ def touch(
         store, graph, current_hashes=targeted, persist=True,
         verified_paths=_resolve_tracked(store, path),
     )
-    if rel in result.changed_paths or str(path) in result.changed_paths:
+    # The verdict must match what the pass actually did: changed_paths is keyed
+    # by the STORED source spelling (the graph file's own spelling, recorded
+    # verbatim), so compare against every stored spelling that resolves to the
+    # touched file — not just the canonical relative form (`rel`).
+    if result.changed_paths & _resolve_tracked(store, path):
         typer.secho(
             f"{rel} changed -> {_fmt(store.dirty_count)} dirty",
             fg=typer.colors.YELLOW,
